@@ -1,0 +1,84 @@
+{
+  "entities": {
+    "Customer": {
+      "title": "Customer",
+      "description": "A late-paying customer for Zone 1 of Shatt al-Arab Residential City.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Full name of the customer"
+        },
+        "phone": {
+          "type": "string",
+          "description": "Phone number"
+        },
+        "unitNumber": {
+          "type": "string",
+          "description": "Housing unit number (e.g., Z1-102)"
+        },
+        "delayedInstallments": {
+          "type": "number",
+          "description": "Number of installments that have not been paid"
+        },
+        "remainingBalance": {
+          "type": "number",
+          "description": "Total amount still owed"
+        },
+        "lastInstallmentDate": {
+          "type": "string",
+          "format": "date",
+          "description": "The date of the last installment paid"
+        },
+        "lastInstallmentAmount": {
+          "type": "number",
+          "description": "The amount of the last installment paid"
+        },
+        "legalStatus": {
+          "type": "string",
+          "enum": ["none", "notified", "warned", "lawsuit"],
+          "description": "Current legal status: none, notified (تبليغ), warned (توجيه انذار), lawsuit (رفع دعوه قضائية)"
+        },
+        "lawyerName": {
+          "type": "string",
+          "description": "Name of the lawyer handling the case"
+        },
+        "lastContactNotes": {
+          "type": "string",
+          "description": "Notes from the last communication with the customer"
+        },
+        "statusHistory": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "status": { "type": "string" },
+              "notes": { "type": "string" },
+              "updatedBy": { "type": "string" },
+              "timestamp": { "type": "string", "format": "date-time" }
+            }
+          }
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["name", "phone", "unitNumber", "delayedInstallments", "remainingBalance", "legalStatus"]
+    }
+  },
+  "firestore": {
+    "customers": {
+      "schema": "Customer",
+      "description": "Collection of late-paying customers"
+    },
+    "config": {
+      "schema": "object",
+      "description": "Global application configuration (lawyers, statuses)"
+    }
+  }
+}

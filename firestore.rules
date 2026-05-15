@@ -1,0 +1,63 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Customer validation helper
+    function isValidCustomer(data) {
+      return data.keys().hasAll(['name', 'phone', 'unitNumber', 'delayedInstallments', 'remainingBalance', 'legalStatus'])
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 200
+        && data.phone is string && data.phone.size() > 0 && data.phone.size() <= 50
+        && data.unitNumber is string && data.unitNumber.size() > 0 && data.unitNumber.size() <= 50
+        && data.delayedInstallments is number && data.delayedInstallments >= 0
+        && data.remainingBalance is number && data.remainingBalance >= 0
+        && data.legalStatus in ['none', 'notified', 'warned', 'lawsuit']
+        && (data.get('lawyerName', '') is string)
+        && (data.get('lastContactNotes', '') is string)
+        && (data.get('lastInstallmentAmount', 0) is number)
+        && (data.get('statusHistory', []) is list);
+    }
+
+    match /customers/{customerId} {
+      allow read: if isSignedIn();
+      
+      allow create: if isSignedIn() 
+        && isValidId(customerId)
+        && isValidCustomer(incoming())
+        && incoming().createdAt == request.time;
+
+      allow update: if isSignedIn()
+        && isValidId(customerId)
+        && isValidCustomer(incoming())
+        && incoming().updatedAt == request.time
+        && incoming().createdAt == existing().createdAt;
+
+      allow delete: if isSignedIn();
+    }
+
+    match /config/{configId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+  }
+}
