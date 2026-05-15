@@ -1,0 +1,66 @@
+# Deploy static build (Vite `dist/`) to Hostinger over FTP on every push to main/master.
+#
+# Hostinger setup (short):
+# 1. Create an FTP account in hPanel: Websites → Manage → FTP Accounts → create user.
+#    Note hostname (often ftp.yourdomain.com), username, password, and port (21 or FTPS per panel).
+# 2. Upload target is usually public_html at the FTP account root — adjust `server-dir` if different.
+#
+# Repository secrets (Settings → Secrets and variables → Actions):
+#   FTP_SERVER     — FTP host (example: ftp.example.com)
+#   FTP_USERNAME   — Full FTP username from Hostinger (often username@yourdomain.com)
+#   FTP_PASSWORD   — FTP password
+# Optional overrides (omit to use defaults baked into this workflow):
+#   FTP_SERVER_DIR            — remote folder; unset → ./public_html/ (use ./ if FTP home is already public_html)
+#   GEMINI_API_KEY            — only if you need it embedded at build time (see vite.config)
+# FTPS: add under `FTP deploy` -> with:  protocol: ftps   (and port: 21 or 990 per Hostinger panel)
+
+name: Deploy to Hostinger (FTP)
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-hostinger-ftp
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install and build
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          npm ci
+          npm run build
+
+      - name: FTP deploy
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.6
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: ./dist/
+          server-dir: ${{ secrets.FTP_SERVER_DIR || './public_html/' }}
+          # protocol: ftps
+          # port: 21
+          exclude: |
+            **/.git*
+            **/.git*/**
+            **/node_modules/**
+          timeout: 120000
