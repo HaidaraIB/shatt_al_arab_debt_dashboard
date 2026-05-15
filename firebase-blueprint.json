@@ -1,52 +1,37 @@
 {
   "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Application user with role-based access (admin or lawyer).",
+      "type": "object",
+      "properties": {
+        "role": { "type": "string", "enum": ["admin", "lawyer"] },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "lawyerName": { "type": "string", "description": "Required for lawyers; must match customers.lawyerName" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["role", "email", "active"]
+    },
     "Customer": {
       "title": "Customer",
       "description": "A late-paying customer for Zone 1 of Shatt al-Arab Residential City.",
       "type": "object",
       "properties": {
-        "name": {
-          "type": "string",
-          "description": "Full name of the customer"
-        },
-        "phone": {
-          "type": "string",
-          "description": "Phone number"
-        },
-        "unitNumber": {
-          "type": "string",
-          "description": "Housing unit number (e.g., Z1-102)"
-        },
-        "delayedInstallments": {
-          "type": "number",
-          "description": "Number of installments that have not been paid"
-        },
-        "remainingBalance": {
-          "type": "number",
-          "description": "Total amount still owed"
-        },
-        "lastInstallmentDate": {
-          "type": "string",
-          "format": "date",
-          "description": "The date of the last installment paid"
-        },
-        "lastInstallmentAmount": {
-          "type": "number",
-          "description": "The amount of the last installment paid"
-        },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "unitNumber": { "type": "string" },
+        "delayedInstallments": { "type": "number" },
+        "remainingBalance": { "type": "number" },
+        "lastInstallmentDate": { "type": "string", "format": "date" },
+        "lastInstallmentAmount": { "type": "number" },
         "legalStatus": {
           "type": "string",
-          "enum": ["none", "notified", "warned", "lawsuit"],
-          "description": "Current legal status: none, notified (تبليغ), warned (توجيه انذار), lawsuit (رفع دعوه قضائية)"
+          "enum": ["none", "notified", "warned", "lawsuit"]
         },
-        "lawyerName": {
-          "type": "string",
-          "description": "Name of the lawyer handling the case"
-        },
-        "lastContactNotes": {
-          "type": "string",
-          "description": "Notes from the last communication with the customer"
-        },
+        "lawyerName": { "type": "string" },
+        "lastContactNotes": { "type": "string" },
         "statusHistory": {
           "type": "array",
           "items": {
@@ -59,26 +44,45 @@
             }
           }
         },
-        "createdAt": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "format": "date-time"
-        }
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["name", "phone", "unitNumber", "delayedInstallments", "remainingBalance", "legalStatus"]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "Payment record under a customer (admin-only writes).",
+      "type": "object",
+      "properties": {
+        "amount": { "type": "number" },
+        "paidAt": { "type": "string", "format": "date" },
+        "notes": { "type": "string" },
+        "recordedBy": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["amount", "paidAt", "recordedBy"]
     }
   },
   "firestore": {
+    "users": {
+      "schema": "UserProfile",
+      "description": "Authorized users and roles"
+    },
     "customers": {
       "schema": "Customer",
       "description": "Collection of late-paying customers"
     },
+    "customers/{id}/payments": {
+      "schema": "Payment",
+      "description": "Payment ledger per customer"
+    },
     "config": {
       "schema": "object",
-      "description": "Global application configuration (lawyers, statuses)"
+      "description": "Global configuration (lawyers list, status options, access bootstrap)"
     }
+  },
+  "rbac": {
+    "admin": ["customers CRUD", "payments create", "config write"],
+    "lawyer": ["read assigned customers", "update legalStatus and notes only", "read payments on assigned customers"]
   }
 }

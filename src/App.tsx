@@ -1,18 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Plus, 
-  Search, 
-  Phone, 
-  Home, 
-  Scale, 
-  FileText, 
-  User as UserIcon, 
-  Calendar, 
-  DollarSign, 
-  AlertCircle, 
-  CheckCircle, 
-  Gavel, 
-  MoreHorizontal,
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import {
+  Plus,
+  Search,
+  Scale,
+  FileText,
+  AlertCircle,
+  CheckCircle,
+  Gavel,
   X,
   LogOut,
   LogIn,
@@ -21,42 +15,73 @@ import {
   Edit2,
   Settings,
   Bell,
-  XCircle,
   Info,
   Upload,
-  FileDown
+  FileDown,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
-import * as XLSX from 'xlsx';
-import { 
-  auth, 
-  db, 
-  googleProvider, 
-  Customer, 
-  OperationType, 
+import ExcelJS from 'exceljs';
+import {
+  auth,
+  db,
+  Customer,
+  Payment,
+  OperationType,
   handleFirestoreError,
   arrayUnion,
-  arrayRemove
+  arrayRemove,
+  setDoc,
+  type UserProfile,
+  type UserRole,
 } from './lib/firebase';
-import { 
-  onAuthStateChanged, 
-  signInWithPopup, 
-  signOut, 
-  User as FirebaseUser 
+import {
+  useUserProfile,
+  isProfileActive,
+  isAdmin,
+  isLawyer,
+  canManageCustomers,
+  canRecordPayments,
+  canManageSettings,
+  canUpdateStatus,
+  canManageUsers,
+} from './lib/auth';
+import {
+  adminCreateUser,
+  adminUpdateUser,
+  adminSetUserPassword,
+  mapAuthError,
+} from './lib/users-admin';
+import {
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut,
+  User as FirebaseUser,
 } from 'firebase/auth';
-import { 
-  collection, 
-  onSnapshot, 
-  query, 
-  orderBy, 
-  addDoc, 
-  updateDoc, 
-  deleteDoc, 
-  doc, 
-  serverTimestamp
+import {
+  collection,
+  onSnapshot,
+  query,
+  orderBy,
+  where,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  doc,
+  serverTimestamp,
+  writeBatch,
+  type UpdateData,
 } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
 import { cn } from './lib/utils';
+import {
+  ButtonLoadingContent,
+  LoadingFeedback,
+  LoadingSpinner,
+  useConfirm,
+  useSnackbar,
+} from './components/feedback';
 
 // --- Types & Constants ---
 
@@ -73,15 +98,86 @@ interface StatusOption {
   icon: string;
 }
 
-const ICON_MAP: Record<string, any> = {
-  Plus, Search, Phone, Home, Scale, FileText, UserIcon, Calendar, 
-  DollarSign, AlertCircle, CheckCircle, Gavel, MoreHorizontal, X, LogOut, 
-  LogIn, Loader2, Trash2, Edit2, Settings, Bell, XCircle, Info, Upload, FileDown
+const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
+  Plus,
+  Search,
+  Scale,
+  FileText,
+  AlertCircle,
+  CheckCircle,
+  Gavel,
+  X,
+  LogOut,
+  LogIn,
+  Loader2,
+  Trash2,
+  Edit2,
+  Settings,
+  Bell,
+  Info,
+  Upload,
+  FileDown,
+  Eye,
+  EyeOff,
 };
+
+type PasswordInputProps = {
+  name?: string;
+  value?: string;
+  onChange?: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  required?: boolean;
+  minLength?: number;
+  placeholder?: string;
+  inputClassName?: string;
+};
+
+function PasswordInput({
+  name,
+  value,
+  onChange,
+  required,
+  minLength,
+  placeholder = '••••••••',
+  inputClassName,
+}: PasswordInputProps) {
+  const [visible, setVisible] = useState(false);
+  const isControlled = value !== undefined;
+
+  return (
+    <div className="relative">
+      <input
+        name={name}
+        type={visible ? 'text' : 'password'}
+        required={required}
+        minLength={minLength}
+        placeholder={placeholder}
+        dir="ltr"
+        {...(isControlled ? { value, onChange } : {})}
+        className={cn(
+          'w-full border border-slate-200 rounded-xl py-2.5 pl-10 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20',
+          inputClassName
+        )}
+      />
+      <button
+        type="button"
+        tabIndex={-1}
+        onClick={() => setVisible((v) => !v)}
+        className="absolute left-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-700 transition-colors"
+        aria-label={visible ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'}
+      >
+        {visible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+      </button>
+    </div>
+  );
+}
+
+function displayNameForUser(user: FirebaseUser, profile: UserProfile | null): string {
+  return profile?.displayName?.trim() || profile?.email || user.email || 'مستخدم';
+}
 
 // --- Components ---
 
-const StatusBadge = ({ status, options }: { status: string, options: StatusOption[] }) => {
+const StatusBadge = ({ status, options }: { status: string; options: StatusOption[] }) => {
   const option = options.find(o => o.value === status) || { label: status, icon: 'Info' };
   const Icon = ICON_MAP[option.icon] || Info;
   
@@ -107,20 +203,94 @@ export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [lawyers, setLawyers] = useState<string[]>([]);
   const [statusOptions, setStatusOptions] = useState<StatusOption[]>(LEGAL_STATUS_OPTIONS);
   const [activeCustomer, setActiveCustomer] = useState<Customer | null>(null);
-  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null); // For the details aside
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [formLoading, setFormLoading] = useState(false);
   const [statusUpdateVisible, setStatusUpdateVisible] = useState(false);
   const [paymentUpdateVisible, setPaymentUpdateVisible] = useState(false);
   const [importLoading, setImportLoading] = useState(false);
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const [appUsers, setAppUsers] = useState<(UserProfile & { id: string })[]>([]);
+  const [userFormLoading, setUserFormLoading] = useState(false);
+  const [userFormError, setUserFormError] = useState<string | null>(null);
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [resettingPasswordUserId, setResettingPasswordUserId] = useState<string | null>(null);
+  const [passwordResetLoading, setPasswordResetLoading] = useState(false);
+  const [passwordResetError, setPasswordResetError] = useState<string | null>(null);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loginLoading, setLoginLoading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const selectedCustomerIdRef = useRef<string | null>(null);
 
-  // --- Firebase Auth ---
+  const { profile, profileLoading } = useUserProfile(user?.uid);
+  const confirmAction = useConfirm();
+  const { showSnackbar } = useSnackbar();
+  const admin = isAdmin(profile);
+  const lawyer = isLawyer(profile);
+  const showPayments = canRecordPayments(profile);
+  const showCustomerForm = canManageCustomers(profile);
+
+  const customersSubscriptionEnabled =
+    Boolean(user) && !profileLoading && isProfileActive(profile);
+  const customersQuery = useMemo(() => {
+    if (!customersSubscriptionEnabled || !profile) return null;
+    if (isAdmin(profile)) {
+      return query(collection(db, 'customers'), orderBy('createdAt', 'desc'));
+    }
+    if (profile.lawyerName) {
+      return query(
+        collection(db, 'customers'),
+        where('lawyerName', '==', profile.lawyerName),
+        orderBy('createdAt', 'desc')
+      );
+    }
+    return null;
+  }, [customersSubscriptionEnabled, profile]);
+
+  const paymentsSubscriptionEnabled =
+    Boolean(selectedCustomer?.id) && isProfileActive(profile);
+  const usersSubscriptionEnabled = Boolean(user) && admin;
+
+  const visibleCustomers = useMemo(
+    () => (customersSubscriptionEnabled && customersQuery ? customers : []),
+    [customersSubscriptionEnabled, customersQuery, customers]
+  );
+  const visiblePayments = useMemo(
+    () => (paymentsSubscriptionEnabled ? payments : []),
+    [paymentsSubscriptionEnabled, payments]
+  );
+  const visibleAppUsers = useMemo(
+    () => (usersSubscriptionEnabled ? appUsers : []),
+    [usersSubscriptionEnabled, appUsers]
+  );
+
+  const editingUser = editingUserId
+    ? visibleAppUsers.find((u) => u.id === editingUserId) ?? null
+    : null;
+
+  const lawyerNames = useMemo(() => {
+    const names = new Set<string>();
+    visibleAppUsers
+      .filter((u) => u.role === 'lawyer' && u.active)
+      .forEach((u) => {
+        const n = (u.lawyerName || u.displayName)?.trim();
+        if (n) names.add(n);
+      });
+    visibleCustomers.forEach((c) => {
+      if (c.lawyerName?.trim()) names.add(c.lawyerName.trim());
+    });
+    return Array.from(names).sort((a, b) => a.localeCompare(b, 'ar'));
+  }, [visibleAppUsers, visibleCustomers]);
+
+  useEffect(() => {
+    selectedCustomerIdRef.current = selectedCustomer?.id ?? null;
+  }, [selectedCustomer?.id]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
@@ -130,71 +300,113 @@ export default function App() {
     return unsubscribe;
   }, []);
 
-  const handleLogin = async () => {
+  const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setLoginLoading(true);
+    setLoginError(null);
     try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (err) {
-      console.error("Login failed", err);
+      await signInWithEmailAndPassword(
+        auth,
+        loginEmail.trim().toLowerCase(),
+        loginPassword
+      );
+    } catch (err: unknown) {
+      const code =
+        err && typeof err === 'object' && 'code' in err ? String((err as { code: string }).code) : '';
+      const msg = mapAuthError(code);
+      setLoginError(msg);
+      showSnackbar(msg, 'error');
+    } finally {
+      setLoginLoading(false);
     }
   };
 
-  const handleLogout = () => signOut(auth);
-
-  // --- Real-time Data ---
+  const handleLogout = async () => {
+    const ok = await confirmAction({
+      title: 'تسجيل الخروج',
+      message: 'هل تريد إنهاء الجلسة وتسجيل الخروج؟',
+      confirmLabel: 'تسجيل الخروج',
+      cancelLabel: 'إلغاء',
+      variant: 'danger',
+    });
+    if (!ok) return;
+    void signOut(auth);
+  };
 
   useEffect(() => {
-    if (!user) return;
+    if (!customersQuery) return;
 
-    const q = query(collection(db, 'customers'), orderBy('createdAt', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Customer[];
-      setCustomers(data);
-      // Update selected customer if it exists in the list
-      if (selectedCustomer) {
-        const updated = data.find(c => c.id === selectedCustomer.id);
-        if (updated) setSelectedCustomer(updated);
+    return onSnapshot(
+      customersQuery,
+      (snapshot) => {
+        const data = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        })) as Customer[];
+        setCustomers(data);
+        const selectedId = selectedCustomerIdRef.current;
+        if (selectedId) {
+          const updated = data.find((c) => c.id === selectedId);
+          if (updated) setSelectedCustomer(updated);
+          else setSelectedCustomer(null);
+        }
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'customers');
       }
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'customers');
-    });
-
-    return unsubscribe;
-  }, [user, selectedCustomer?.id]);
+    );
+  }, [customersQuery]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!paymentsSubscriptionEnabled || !selectedCustomer?.id) return;
 
-    // Listen for lawyers
-    const unsubLawyers = onSnapshot(doc(db, 'config', 'lawyers'), (snap) => {
-      if (snap.exists()) {
-        setLawyers(snap.data().list || []);
-      }
+    const paymentsQuery = query(
+      collection(db, 'customers', selectedCustomer.id, 'payments'),
+      orderBy('createdAt', 'desc')
+    );
+
+    return onSnapshot(paymentsQuery, (snapshot) => {
+      setPayments(
+        snapshot.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        })) as Payment[]
+      );
     });
+  }, [paymentsSubscriptionEnabled, selectedCustomer?.id]);
 
-    // Listen for statuses
+  useEffect(() => {
+    if (!user || !isProfileActive(profile)) return;
+
     const unsubStatuses = onSnapshot(doc(db, 'config', 'statuses'), (snap) => {
       if (snap.exists()) {
         setStatusOptions(snap.data().list || LEGAL_STATUS_OPTIONS);
       }
     });
 
-    return () => {
-      unsubLawyers();
-      unsubStatuses();
-    };
-  }, [user]);
+    return () => unsubStatuses();
+  }, [user, profile]);
+
+  useEffect(() => {
+    if (!usersSubscriptionEnabled) return;
+
+    return onSnapshot(collection(db, 'users'), (snap) => {
+      setAppUsers(snap.docs.map((d) => ({ id: d.id, ...(d.data() as UserProfile) })));
+    });
+  }, [usersSubscriptionEnabled]);
 
   // --- Actions ---
 
   const handleSaveCustomer = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!user || !showCustomerForm) return;
     setFormLoading(true);
-    
+
+    const actor = displayNameForUser(user, profile);
     const formData = new FormData(e.currentTarget);
-    const data: Partial<Customer> = {
+    const legalStatus = formData.get('legalStatus') as Customer['legalStatus'];
+    const lastContactNotes = formData.get('lastContactNotes') as string;
+    const data: UpdateData<Customer> = {
       name: formData.get('name') as string,
       phone: formData.get('phone') as string,
       unitNumber: formData.get('unitNumber') as string,
@@ -202,38 +414,47 @@ export default function App() {
       remainingBalance: Number(formData.get('remainingBalance')),
       lastInstallmentDate: formData.get('lastInstallmentDate') as string,
       lastInstallmentAmount: Number(formData.get('lastInstallmentAmount')),
-      legalStatus: formData.get('legalStatus') as any,
+      legalStatus,
       lawyerName: formData.get('lawyerName') as string,
-      lastContactNotes: formData.get('lastContactNotes') as string,
-      updatedAt: serverTimestamp() as any,
+      lastContactNotes,
+      updatedAt: serverTimestamp(),
     };
 
     try {
       if (activeCustomer?.id) {
-        // Check if legalStatus changed
-        if (activeCustomer.legalStatus !== (data.legalStatus as any)) {
+        if (activeCustomer.legalStatus !== legalStatus) {
           data.statusHistory = arrayUnion({
-            status: data.legalStatus,
-            notes: `تغيير الحالة من النموذج الرئيسي: ${data.lastContactNotes || 'بدون ملاحظات'}`,
-            updatedBy: user?.displayName || 'System',
+            status: legalStatus,
+            notes: `تغيير الحالة من النموذج الرئيسي: ${lastContactNotes || 'بدون ملاحظات'}`,
+            updatedBy: actor,
             timestamp: new Date().toISOString(),
-          }) as any;
+          });
         }
         await updateDoc(doc(db, 'customers', activeCustomer.id), data);
       } else {
-        data.createdAt = serverTimestamp() as any;
-        data.statusHistory = [{
-          status: data.legalStatus as any,
-          notes: 'إضافة الزبون للنظام لأول مرة',
-          updatedBy: user?.displayName || 'System',
-          timestamp: new Date().toISOString(),
-        }];
+        data.createdAt = serverTimestamp();
+        data.statusHistory = [
+          {
+            status: legalStatus,
+            notes: 'إضافة الزبون للنظام لأول مرة',
+            updatedBy: actor,
+            timestamp: new Date().toISOString(),
+          },
+        ];
         await addDoc(collection(db, 'customers'), data);
       }
       setIsModalOpen(false);
       setActiveCustomer(null);
+      showSnackbar(
+        activeCustomer?.id ? 'تم تحديث بيانات الزبون' : 'تمت إضافة الزبون',
+        'success'
+      );
     } catch (error) {
-      handleFirestoreError(error, activeCustomer ? OperationType.UPDATE : OperationType.CREATE, 'customers');
+      try {
+        handleFirestoreError(error, activeCustomer ? OperationType.UPDATE : OperationType.CREATE, 'customers');
+      } catch {
+        showSnackbar('تعذر حفظ بيانات الزبون.', 'error');
+      }
     } finally {
       setFormLoading(false);
     }
@@ -241,9 +462,10 @@ export default function App() {
 
   const handlePaymentUpdate = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!selectedCustomer?.id) return;
+    if (!selectedCustomer?.id || !showPayments || !user) return;
     setFormLoading(true);
 
+    const actor = displayNameForUser(user, profile);
     const formData = new FormData(e.currentTarget);
     const amount = Number(formData.get('amount'));
     const date = formData.get('date') as string;
@@ -252,129 +474,186 @@ export default function App() {
     try {
       const newRemainingBalance = Math.max(0, selectedCustomer.remainingBalance - amount);
       const newDelayedInstallments = Math.max(0, selectedCustomer.delayedInstallments - 1);
+      const customerRef = doc(db, 'customers', selectedCustomer.id);
+      const paymentRef = doc(collection(db, 'customers', selectedCustomer.id, 'payments'));
 
-      await updateDoc(doc(db, 'customers', selectedCustomer.id), {
+      const batch = writeBatch(db);
+      batch.set(paymentRef, {
+        amount,
+        paidAt: date,
+        notes: notes || '',
+        recordedBy: actor,
+        createdAt: serverTimestamp(),
+      });
+      batch.update(customerRef, {
         remainingBalance: newRemainingBalance,
         delayedInstallments: newDelayedInstallments,
         lastInstallmentAmount: amount,
         lastInstallmentDate: date,
         updatedAt: serverTimestamp(),
         statusHistory: arrayUnion({
-          status: 'none', // Payment is a positive activity, maybe keep current status or reset? Let's keep current.
+          status: selectedCustomer.legalStatus,
           notes: `تم استلام دفعة مالية بقيمة ${amount.toLocaleString()} د.ع بتاريخ ${date}. ${notes}`,
-          updatedBy: user?.displayName || 'System',
+          updatedBy: actor,
           timestamp: new Date().toISOString(),
-        })
+        }),
       });
+      await batch.commit();
       setPaymentUpdateVisible(false);
+      showSnackbar('تم تسجيل الدفعة بنجاح', 'success');
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `customers/${selectedCustomer.id}`);
+      try {
+        handleFirestoreError(error, OperationType.UPDATE, `customers/${selectedCustomer.id}`);
+      } catch {
+        showSnackbar('تعذر تسجيل الدفعة.', 'error');
+      }
     } finally {
       setFormLoading(false);
     }
   };
 
-  const handleExcelImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !user) return;
-
-    setImportLoading(true);
-    const reader = new FileReader();
-
-    reader.onload = async (evt) => {
-      try {
-        const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
-        const wsname = wb.SheetNames[0];
-        const ws = wb.Sheets[wsname];
-        const data = XLSX.utils.sheet_to_json(ws) as any[];
-
-        let importedCount = 0;
-        for (const row of data) {
-          // Map excel columns to database fields
-          // Expected columns: Name, Phone, Unit, Delayed, Balance, Lawyer, Status
-          const customer: Partial<Customer> = {
-            name: String(row.Name || row['الاسم'] || ''),
-            phone: String(row.Phone || row['الهاتف'] || ''),
-            unitNumber: String(row.Unit || row['الوحدة'] || ''),
-            delayedInstallments: Number(row.Delayed || row['التأخير'] || 0),
-            remainingBalance: Number(row.Balance || row['المبلغ'] || 0),
-            lawyerName: String(row.Lawyer || row['المحامي'] || ''),
-            legalStatus: row.Status || row['الحالة'] || 'none',
-            lastContactNotes: 'مستورد من ملف إكسل',
-            createdAt: serverTimestamp() as any,
-            updatedAt: serverTimestamp() as any,
-            statusHistory: [{
-              status: (row.Status || 'none') as any,
-              notes: 'تمت الإضافة عبر استيراد إكسل',
-              updatedBy: user.displayName || 'System',
-              timestamp: new Date().toISOString(),
-            }]
-          };
-
-          if (customer.name && customer.unitNumber) {
-            await addDoc(collection(db, 'customers'), customer);
-            importedCount++;
-          }
-        }
-        alert(`تم استيراد ${importedCount} زبون بنجاح`);
-      } catch (error) {
-        console.error("Import error:", error);
-        alert("فشل استيراد الملف. تأكد من صحة البيانات.");
-      } finally {
-        setImportLoading(false);
-        if (fileInputRef.current) fileInputRef.current.value = '';
-      }
+  const parseExcelRow = (
+    row: ExcelJS.Row,
+    colIndex: Record<string, number>
+  ): Partial<Customer> | null => {
+    const cell = (key: string) => {
+      const idx = colIndex[key];
+      if (idx === undefined) return '';
+      const v = row.getCell(idx).value;
+      if (v == null) return '';
+      if (typeof v === 'object' && 'text' in v) return String((v as { text: string }).text);
+      return String(v);
     };
-
-    reader.readAsBinaryString(file);
+    const name = cell('name');
+    const unitNumber = cell('unit');
+    if (!name || !unitNumber) return null;
+    const statusRaw = cell('status') || 'none';
+    const legalStatus = ['none', 'notified', 'warned', 'lawsuit'].includes(statusRaw)
+      ? (statusRaw as Customer['legalStatus'])
+      : 'none';
+    return {
+      name,
+      phone: cell('phone'),
+      unitNumber,
+      delayedInstallments: Number(cell('delayed')) || 0,
+      remainingBalance: Number(cell('balance')) || 0,
+      lawyerName: cell('lawyer'),
+      legalStatus,
+    };
   };
 
-  const handleDownloadTemplate = () => {
-    const templateData = [
-      {
-        "الاسم": "أحمد علي",
-        "الهاتف": "07800000000",
-        "الوحدة": "Z1-101",
-        "التأخير": 3,
-        "المبلغ": 15000000,
-        "المحامي": "مخلص الوائلي",
-        "الحالة": "warned"
-      },
-      {
-        "الاسم": "سارة محمد",
-        "الهاتف": "07700000000",
-        "الوحدة": "Z1-502",
-        "التأخير": 1,
-        "المبلغ": 5000000,
-        "المحامي": "",
-        "الحالة": "notified"
-      }
-    ];
+  const handleExcelImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user || !admin) return;
 
-    const ws = XLSX.utils.json_to_sheet(templateData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Customers Template");
-    XLSX.writeFile(wb, "Shatt_AlArab_Template.xlsx");
+    setImportLoading(true);
+    const actor = displayNameForUser(user, profile);
+
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(buffer);
+      const sheet = workbook.worksheets[0];
+      if (!sheet) throw new Error('لا يوجد ورقة بيانات في الملف');
+
+      const headerRow = sheet.getRow(1);
+      const colIndex: Record<string, number> = {};
+      headerRow.eachCell((cell, colNumber) => {
+        const h = String(cell.value ?? '')
+          .trim()
+          .toLowerCase();
+        if (h === 'name' || h === 'الاسم') colIndex.name = colNumber;
+        else if (h === 'phone' || h === 'الهاتف') colIndex.phone = colNumber;
+        else if (h === 'unit' || h === 'الوحدة') colIndex.unit = colNumber;
+        else if (h === 'delayed' || h === 'التأخير') colIndex.delayed = colNumber;
+        else if (h === 'balance' || h === 'المبلغ') colIndex.balance = colNumber;
+        else if (h === 'lawyer' || h === 'المحامي') colIndex.lawyer = colNumber;
+        else if (h === 'status' || h === 'الحالة') colIndex.status = colNumber;
+      });
+
+      let importedCount = 0;
+      for (let i = 2; i <= sheet.rowCount; i++) {
+        const row = sheet.getRow(i);
+        const parsed = parseExcelRow(row, colIndex);
+        if (!parsed) continue;
+
+        const customer: Partial<Customer> = {
+          ...parsed,
+          lastContactNotes: 'مستورد من ملف إكسل',
+          createdAt: serverTimestamp() as Customer['createdAt'],
+          updatedAt: serverTimestamp() as Customer['updatedAt'],
+          statusHistory: [
+            {
+              status: parsed.legalStatus ?? 'none',
+              notes: 'تمت الإضافة عبر استيراد إكسل',
+              updatedBy: actor,
+              timestamp: new Date().toISOString(),
+            },
+          ],
+        };
+        await addDoc(collection(db, 'customers'), customer);
+        importedCount++;
+      }
+      showSnackbar(`تم استيراد ${importedCount} زبون بنجاح`, 'success');
+    } catch (error) {
+      console.error('Import error:', error);
+      showSnackbar('فشل استيراد الملف. تأكد من صحة البيانات.', 'error');
+    } finally {
+      setImportLoading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleDownloadTemplate = async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Customers Template');
+    sheet.addRow(['الاسم', 'الهاتف', 'الوحدة', 'التأخير', 'المبلغ', 'المحامي', 'الحالة']);
+    sheet.addRow(['أحمد علي', '07800000000', 'Z1-101', 3, 15000000, 'مخلص الوائلي', 'warned']);
+    sheet.addRow(['سارة محمد', '07700000000', 'Z1-502', 1, 5000000, '', 'notified']);
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'Shatt_AlArab_Template.xlsx';
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const handleDeleteCustomer = async (id: string) => {
-    if (!confirm("هل أنت متأكد من حذف معلومات هذا الزبون؟")) return;
+    if (!admin) return;
+    const ok = await confirmAction({
+      title: 'حذف الزبون',
+      message: 'هل أنت متأكد من حذف معلومات هذا الزبون؟',
+      confirmLabel: 'حذف',
+      cancelLabel: 'إلغاء',
+      variant: 'danger',
+    });
+    if (!ok) return;
     try {
       await deleteDoc(doc(db, 'customers', id));
       if (selectedCustomer?.id === id) setSelectedCustomer(null);
+      showSnackbar('تم حذف الزبون', 'success');
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `customers/${id}`);
+      try {
+        handleFirestoreError(error, OperationType.DELETE, `customers/${id}`);
+      } catch {
+        showSnackbar('تعذر حذف الزبون. حاول مرة أخرى.', 'error');
+      }
     }
   };
 
   const handleQuickStatusUpdate = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!selectedCustomer?.id) return;
+    if (!selectedCustomer?.id || !user || !canUpdateStatus(profile)) return;
     setFormLoading(true);
 
+    const actor = displayNameForUser(user, profile);
     const formData = new FormData(e.currentTarget);
-    const newStatus = formData.get('legalStatus') as any;
+    const newStatus = formData.get('legalStatus') as Customer['legalStatus'];
     const notes = formData.get('notes') as string;
 
     try {
@@ -385,74 +664,219 @@ export default function App() {
         statusHistory: arrayUnion({
           status: newStatus,
           notes: notes || 'تحديث حالة سريع',
-          updatedBy: user?.displayName || 'System',
+          updatedBy: actor,
           timestamp: new Date().toISOString(),
-        })
+        }),
       });
       setStatusUpdateVisible(false);
+      showSnackbar('تم تحديث الحالة', 'success');
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `customers/${selectedCustomer.id}`);
+      try {
+        handleFirestoreError(error, OperationType.UPDATE, `customers/${selectedCustomer.id}`);
+      } catch {
+        showSnackbar('تعذر تحديث الحالة.', 'error');
+      }
     } finally {
       setFormLoading(false);
     }
   };
 
-  // --- Settings Actions ---
+  const handleSaveUser = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!admin) return;
+    const form = e.currentTarget;
+    setUserFormLoading(true);
+    setUserFormError(null);
 
-  const handleAddLawyer = async (name: string) => {
-    if (!name || lawyers.includes(name)) return;
+    const formData = new FormData(form);
+    const email = String(formData.get('email') ?? '').trim();
+    const password = String(formData.get('password') ?? '');
+    const confirmPassword = String(formData.get('confirmPassword') ?? '');
+    const displayName = String(formData.get('displayName') ?? '').trim();
+    const role = String(formData.get('role') ?? 'lawyer') as UserRole;
+    const active = formData.get('active') === 'on';
+
+    if (role === 'lawyer' && !displayName) {
+      const msg = 'الاسم مطلوب لحساب المحامي';
+      setUserFormError(msg);
+      showSnackbar(msg, 'error');
+      setUserFormLoading(false);
+      return;
+    }
+
     try {
-      await updateDoc(doc(db, 'config', 'lawyers'), {
-        list: arrayUnion(name)
-      });
+      if (editingUserId) {
+        await adminUpdateUser(editingUserId, {
+          displayName,
+          role,
+          active,
+        });
+        setEditingUserId(null);
+        showSnackbar('تم تحديث بيانات المستخدم', 'success');
+      } else {
+        if (!email) throw new Error('البريد الإلكتروني مطلوب');
+        if (password.length < 6) throw new Error('كلمة المرور يجب أن تكون 6 أحرف على الأقل');
+        if (password !== confirmPassword) throw new Error('كلمتا المرور غير متطابقتين');
+        await adminCreateUser({
+          email,
+          password,
+          displayName,
+          role,
+          active,
+        });
+        form.reset();
+        showSnackbar('تم إنشاء المستخدم', 'success');
+      }
     } catch (error) {
-      console.error(error);
+      const msg = error instanceof Error ? error.message : 'فشل حفظ المستخدم';
+      setUserFormError(msg);
+      showSnackbar(msg, 'error');
+    } finally {
+      setUserFormLoading(false);
     }
   };
 
-  const handleRemoveLawyer = async (name: string) => {
+  const handleDeactivateUser = async (uid: string) => {
+    if (!admin || uid === user?.uid) return;
+    const ok = await confirmAction({
+      title: 'تعطيل المستخدم',
+      message: 'هل تريد تعطيل هذا المستخدم؟',
+      confirmLabel: 'تعطيل',
+      cancelLabel: 'إلغاء',
+      variant: 'danger',
+    });
+    if (!ok) return;
     try {
-      await updateDoc(doc(db, 'config', 'lawyers'), {
-        list: arrayRemove(name)
-      });
+      await updateDoc(doc(db, 'users', uid), { active: false });
+      showSnackbar('تم تعطيل المستخدم', 'success');
     } catch (error) {
-      console.error(error);
+      try {
+        handleFirestoreError(error, OperationType.UPDATE, `users/${uid}`);
+      } catch {
+        showSnackbar('تعذر تعطيل المستخدم.', 'error');
+      }
+    }
+  };
+
+  const handleActivateUser = async (uid: string) => {
+    if (!admin) return;
+    const ok = await confirmAction({
+      title: 'تفعيل المستخدم',
+      message: 'هل تريد تفعيل هذا المستخدم؟',
+      confirmLabel: 'تفعيل',
+      cancelLabel: 'إلغاء',
+    });
+    if (!ok) return;
+    try {
+      await updateDoc(doc(db, 'users', uid), { active: true });
+      showSnackbar('تم تفعيل المستخدم', 'success');
+    } catch (error) {
+      try {
+        handleFirestoreError(error, OperationType.UPDATE, `users/${uid}`);
+      } catch {
+        showSnackbar('تعذر تفعيل المستخدم.', 'error');
+      }
+    }
+  };
+
+  const handleSetUserPassword = async (
+    e: React.FormEvent<HTMLFormElement>,
+    uid: string
+  ) => {
+    e.preventDefault();
+    if (!admin) return;
+    const form = e.currentTarget;
+    setPasswordResetLoading(true);
+    setPasswordResetError(null);
+
+    const formData = new FormData(form);
+    const password = String(formData.get('newPassword') ?? '');
+    const confirmPassword = String(formData.get('confirmNewPassword') ?? '');
+
+    if (password.length < 6) {
+      const msg = 'كلمة المرور يجب أن تكون 6 أحرف على الأقل';
+      setPasswordResetError(msg);
+      showSnackbar(msg, 'error');
+      setPasswordResetLoading(false);
+      return;
+    }
+    if (password !== confirmPassword) {
+      const msg = 'كلمتا المرور غير متطابقتين';
+      setPasswordResetError(msg);
+      showSnackbar(msg, 'error');
+      setPasswordResetLoading(false);
+      return;
+    }
+
+    try {
+      await adminSetUserPassword(uid, password);
+      setResettingPasswordUserId(null);
+      form.reset();
+      showSnackbar('تم تحديث كلمة المرور بنجاح', 'success');
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'فشل تحديث كلمة المرور';
+      setPasswordResetError(msg);
+      showSnackbar(msg, 'error');
+    } finally {
+      setPasswordResetLoading(false);
     }
   };
 
   const handleAddStatus = async (label: string) => {
-    if (!label) return;
+    if (!canManageSettings(profile) || !label) return;
     const value = label.trim().toLowerCase().replace(/\s+/g, '_');
-    if (statusOptions.find(o => o.value === value)) return;
-    
+    if (statusOptions.find((o) => o.value === value)) {
+      showSnackbar('هذه الحالة موجودة مسبقاً', 'info');
+      return;
+    }
+
     const newStatus: StatusOption = {
       value,
       label,
-      icon: 'Bell'
+      icon: 'Bell',
     };
-    
+
     try {
-      await updateDoc(doc(db, 'config', 'statuses'), {
-        list: arrayUnion(newStatus)
-      });
+      await setDoc(
+        doc(db, 'config', 'statuses'),
+        { list: arrayUnion(newStatus) },
+        { merge: true }
+      );
+      showSnackbar(`تمت إضافة الحالة: ${label.trim()}`, 'success');
     } catch (error) {
       console.error(error);
+      showSnackbar('تعذر إضافة الحالة. حاول مرة أخرى.', 'error');
     }
   };
 
   const handleRemoveStatus = async (value: string) => {
-    const statusToRemove = statusOptions.find(o => o.value === value);
+    if (!canManageSettings(profile)) return;
+    const statusToRemove = statusOptions.find((o) => o.value === value);
     if (!statusToRemove) return;
+
+    const ok = await confirmAction({
+      title: 'حذف حالة المتابعة',
+      message: `هل تريد حذف الحالة «${statusToRemove.label}»؟ لن تختفي هذه القيمة من سجلات الزبائن القديمة، لكن ستُزال من قائمة الخيارات.`,
+      confirmLabel: 'حذف',
+      cancelLabel: 'إلغاء',
+      variant: 'danger',
+    });
+    if (!ok) return;
+
     try {
-      await updateDoc(doc(db, 'config', 'statuses'), {
-        list: arrayRemove(statusToRemove)
-      });
+      await setDoc(
+        doc(db, 'config', 'statuses'),
+        { list: arrayRemove(statusToRemove) },
+        { merge: true }
+      );
+      showSnackbar('تم حذف الحالة', 'success');
     } catch (error) {
       console.error(error);
+      showSnackbar('تعذر حذف الحالة.', 'error');
     }
   };
 
-  const filteredCustomers = customers.filter(c => 
+  const filteredCustomers = visibleCustomers.filter(c => 
     c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     c.unitNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
     c.phone.includes(searchTerm)
@@ -460,11 +884,11 @@ export default function App() {
 
   // --- Render Helpers ---
 
-  if (loading) {
+  if (loading || (user && profileLoading)) {
     return (
-      <div className="flex h-screen w-full items-center justify-center bg-slate-50">
-        <Loader2 className="w-8 h-8 animate-spin text-slate-400" />
-      </div>
+      <motion.div className="flex h-screen w-full items-center justify-center bg-slate-50" dir="rtl">
+        <LoadingFeedback size="lg" layout="stack" />
+      </motion.div>
     );
   }
 
@@ -475,23 +899,81 @@ export default function App() {
           <div className="w-16 h-16 bg-slate-900 rounded-2xl flex items-center justify-center mb-6 mx-auto">
             <Scale className="text-white w-8 h-8" />
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 mb-2">إدارة ديون الزون الأول</h1>
-          <p className="text-slate-500 mb-8 leading-relaxed">
-            مرحباً بك في نظام إدارة الزبائن المتأخرين بمدينة شط العرب السكنية. يرجى تسجيل الدخول للمتابعة.
+          <h1 className="text-2xl font-bold text-slate-900 mb-6 text-center">إدارة ديون الزون الأول</h1>
+          <p className="text-slate-500 mb-6 leading-relaxed">
+            مرحباً بك في نظام إدارة الزبائن المتأخرين. سجّل الدخول بحسابك الذي أنشأه المسؤول.
           </p>
-          <button 
-            onClick={handleLogin}
-            className="w-full flex items-center justify-center gap-3 bg-white border border-slate-200 py-3 px-4 rounded-xl text-slate-700 hover:bg-slate-50 transition-colors font-medium shadow-sm"
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
+                البريد الإلكتروني
+              </label>
+              <input
+                type="email"
+                required
+                dir="ltr"
+                value={loginEmail}
+                onChange={(e) => setLoginEmail(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                placeholder="email@example.com"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">
+                كلمة المرور
+              </label>
+              <PasswordInput
+                required
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                inputClassName="bg-slate-50 py-3"
+              />
+            </div>
+            {loginError && <p className="text-xs text-rose-600 font-medium">{loginError}</p>}
+            <button
+              type="submit"
+              disabled={loginLoading}
+              className="w-full flex items-center justify-center gap-3 bg-slate-900 text-white py-3 px-4 rounded-xl font-medium hover:bg-slate-800 disabled:opacity-50"
+            >
+              {loginLoading ? <LoadingSpinner size="md" tone="inherit" /> : <LogIn className="w-5 h-5" />}
+              تسجيل الدخول
+            </button>
+          </form>
+          <p className="text-[10px] text-slate-400 mt-6 text-center">
+            لا يمكن التسجيل ذاتياً — يُنشئ المسؤول الحسابات فقط.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isProfileActive(profile)) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-slate-50 p-6 text-right" dir="rtl">
+        <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 border border-slate-200 text-center">
+          <div className="w-16 h-16 bg-rose-100 rounded-2xl flex items-center justify-center mb-6 mx-auto">
+            <AlertCircle className="text-rose-600 w-8 h-8" />
+          </div>
+          <h1 className="text-2xl font-bold text-slate-900 mb-2">غير مصرح</h1>
+          <p className="text-slate-500 mb-6 leading-relaxed">
+            حسابك غير مسجل في النظام أو تم تعطيله. يرجى التواصل مع المسؤول لإضافة صلاحياتك.
+          </p>
+          <p className="text-xs text-slate-400 font-mono mb-6" dir="ltr">
+            {user.email}
+          </p>
+          <button
+            onClick={handleLogout}
+            className="w-full flex items-center justify-center gap-2 bg-slate-900 text-white py-3 px-4 rounded-xl font-medium"
           >
-            <LogIn className="w-5 h-5 text-slate-400" />
-            تسجيل الدخول باستخدام جوجل
+            <LogOut className="w-5 h-5" />
+            تسجيل الخروج
           </button>
         </div>
       </div>
     );
   }
 
-  const totalBalance = customers.reduce((sum, c) => sum + c.remainingBalance, 0);
+  const totalBalance = visibleCustomers.reduce((sum, c) => sum + c.remainingBalance, 0);
 
   return (
     <div className="flex flex-col h-screen w-full bg-slate-50 text-slate-900 overflow-hidden font-sans" dir="rtl">
@@ -508,45 +990,57 @@ export default function App() {
             <span className="text-slate-400 text-[10px] uppercase tracking-widest font-bold">إجمالي المبالغ المتأخرة</span>
             <span className="text-emerald-400 font-mono text-lg font-bold">{totalBalance.toLocaleString()} د.ع</span>
           </div>
-          <button 
-            onClick={() => {
-              setActiveCustomer(null);
-              setIsModalOpen(true);
-            }}
-            className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2 rounded-md font-bold flex items-center gap-2 transition-colors shadow-md"
-          >
-            <Plus className="w-4 h-4" />
-            <span className="hidden sm:inline">إضافة زبون جديد</span>
-            <span className="sm:hidden">إضافة</span>
-          </button>
-          
-          <input 
-            type="file" 
-            ref={fileInputRef} 
-            className="hidden" 
-            accept=".xlsx, .xls" 
-            onChange={handleExcelImport}
-          />
+          {admin && (
+            <>
+              <button
+                onClick={() => {
+                  setActiveCustomer(null);
+                  setIsModalOpen(true);
+                }}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2 rounded-md font-bold flex items-center gap-2 transition-colors shadow-md"
+              >
+                <Plus className="w-4 h-4" />
+                <span className="hidden sm:inline">إضافة زبون جديد</span>
+                <span className="sm:hidden">إضافة</span>
+              </button>
 
-          <button 
-            onClick={() => fileInputRef.current?.click()}
-            disabled={importLoading}
-            className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-md font-bold flex items-center gap-2 transition-colors border border-slate-700 disabled:opacity-50"
-            title="استيراد من إكسل"
-          >
-            {importLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-            <span className="hidden md:inline">استيراد</span>
-          </button>
-          
+              <input
+                type="file"
+                ref={fileInputRef}
+                className="hidden"
+                accept=".xlsx, .xls"
+                onChange={handleExcelImport}
+              />
+
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={importLoading}
+                className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-md font-bold flex items-center gap-2 transition-colors border border-slate-700 disabled:opacity-50"
+                title="استيراد من إكسل"
+              >
+                {importLoading ? <LoadingSpinner size="sm" tone="inherit" /> : <Upload className="w-4 h-4" />}
+                <span className="hidden md:inline">استيراد</span>
+              </button>
+            </>
+          )}
+
+          {lawyer && profile?.lawyerName && (
+            <span className="text-emerald-300 text-xs font-bold hidden md:inline">
+              محامي: {profile.lawyerName}
+            </span>
+          )}
+
           <div className="flex items-center gap-4">
-            <button 
-              onClick={() => setIsSettingsOpen(true)}
-              className="text-slate-400 hover:text-white transition-colors flex items-center gap-1.5"
-              title="الإعدادات"
-            >
-              <Settings className="w-5 h-5" />
-              <span className="hidden md:inline text-xs font-bold uppercase tracking-widest">الإعدادات</span>
-            </button>
+            {canManageSettings(profile) && (
+              <button
+                onClick={() => setIsSettingsOpen(true)}
+                className="text-slate-400 hover:text-white transition-colors flex items-center gap-1.5"
+                title="الإعدادات"
+              >
+                <Settings className="w-5 h-5" />
+                <span className="hidden md:inline text-xs font-bold uppercase tracking-widest">الإعدادات</span>
+              </button>
+            )}
             <button onClick={handleLogout} className="text-slate-400 hover:text-white transition-colors">
               <LogOut className="w-5 h-5" />
             </button>
@@ -558,20 +1052,20 @@ export default function App() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-white border-b border-slate-200 shrink-0">
         <div className="bg-slate-50 p-3 rounded border border-slate-200">
           <div className="text-slate-500 text-[10px] uppercase tracking-widest font-bold mb-1">عدد المتلكأين</div>
-          <div className="text-2xl font-bold font-mono">{customers.length} <span className="text-xs font-sans text-slate-400">زبون</span></div>
+          <div className="text-2xl font-bold font-mono">{visibleCustomers.length} <span className="text-xs font-sans text-slate-400">زبون</span></div>
         </div>
         <div className="bg-amber-50 p-3 rounded border border-amber-200">
           <div className="text-amber-700 text-[10px] uppercase tracking-widest font-bold mb-1">توجيه إنذار</div>
-          <div className="text-2xl font-bold text-amber-700 font-mono">{customers.filter(c => c.legalStatus === 'warned').length}</div>
+          <div className="text-2xl font-bold text-amber-700 font-mono">{visibleCustomers.filter(c => c.legalStatus === 'warned').length}</div>
         </div>
         <div className="bg-red-50 p-3 rounded border border-red-200">
           <div className="text-red-700 text-[10px] uppercase tracking-widest font-bold mb-1">دعاوى فسخ عقد</div>
-          <div className="text-2xl font-bold text-red-700 font-mono">{customers.filter(c => c.legalStatus === 'lawsuit').length}</div>
+          <div className="text-2xl font-bold text-red-700 font-mono">{visibleCustomers.filter(c => c.legalStatus === 'lawsuit').length}</div>
         </div>
         <div className="bg-blue-50 p-3 rounded border border-blue-200">
           <div className="text-blue-700 text-[10px] uppercase tracking-widest font-bold mb-1">متابعات المحامين</div>
           <div className="text-2xl font-bold text-blue-700 font-mono">
-            {new Set(customers.map(c => c.lawyerName).filter(Boolean)).size} <span className="text-xs font-sans">محامين</span>
+            {new Set(visibleCustomers.map(c => c.lawyerName).filter(Boolean)).size} <span className="text-xs font-sans">محامين</span>
           </div>
         </div>
       </div>
@@ -678,6 +1172,19 @@ export default function App() {
                       <span className="text-xs">{selectedCustomer.lastInstallmentDate || 'غير مسجل'}</span>
                     </div>
                   </div>
+                  {visiblePayments.length > 0 && (
+                    <div className="mt-2 space-y-1 max-h-24 overflow-y-auto">
+                      {visiblePayments.slice(0, 5).map((p) => (
+                        <div
+                          key={p.id}
+                          className="text-[10px] flex justify-between text-slate-500 font-mono border-b border-slate-100 pb-1"
+                        >
+                          <span>{p.amount.toLocaleString()} د.ع</span>
+                          <span>{p.paidAt}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </section>
 
                 <section>
@@ -717,24 +1224,28 @@ export default function App() {
                   <div className="flex justify-between items-center mb-4">
                     <label className="text-[10px] uppercase tracking-widest text-slate-400 font-bold">السجل الزمني للتحديثات</label>
                     <div className="flex gap-2">
-                       <button 
-                        onClick={() => {
-                          setPaymentUpdateVisible(!paymentUpdateVisible);
-                          setStatusUpdateVisible(false);
-                        }}
-                        className="text-[10px] bg-emerald-600 text-white px-2 py-1 rounded-md font-bold hover:bg-emerald-500 transition-colors"
-                      >
-                        {paymentUpdateVisible ? 'إلغاء' : 'إضافة دفعة'}
-                      </button>
-                      <button 
-                        onClick={() => {
-                          setStatusUpdateVisible(!statusUpdateVisible);
-                          setPaymentUpdateVisible(false);
-                        }}
-                        className="text-[10px] bg-slate-900 text-white px-2 py-1 rounded-md font-bold hover:bg-slate-800 transition-colors"
-                      >
-                        {statusUpdateVisible ? 'إلغاء' : 'تحديث الحالة'}
-                      </button>
+                      {showPayments && (
+                        <button
+                          onClick={() => {
+                            setPaymentUpdateVisible(!paymentUpdateVisible);
+                            setStatusUpdateVisible(false);
+                          }}
+                          className="text-[10px] bg-emerald-600 text-white px-2 py-1 rounded-md font-bold hover:bg-emerald-500 transition-colors"
+                        >
+                          {paymentUpdateVisible ? 'إلغاء' : 'إضافة دفعة'}
+                        </button>
+                      )}
+                      {canUpdateStatus(profile) && (
+                        <button
+                          onClick={() => {
+                            setStatusUpdateVisible(!statusUpdateVisible);
+                            setPaymentUpdateVisible(false);
+                          }}
+                          className="text-[10px] bg-slate-900 text-white px-2 py-1 rounded-md font-bold hover:bg-slate-800 transition-colors"
+                        >
+                          {statusUpdateVisible ? 'إلغاء' : 'تحديث الحالة'}
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -778,7 +1289,9 @@ export default function App() {
                         disabled={formLoading}
                         className="w-full bg-emerald-600 text-white py-2 rounded-lg text-xs font-bold hover:bg-emerald-500 disabled:opacity-50 transition-all shadow-md shadow-emerald-200"
                       >
-                        {formLoading ? 'جاري الحفظ...' : 'تثبيت الدفعة'}
+                        <ButtonLoadingContent loading={formLoading} loadingText="جاري الحفظ...">
+                          تثبيت الدفعة
+                        </ButtonLoadingContent>
                       </button>
                     </motion.form>
                   )}
@@ -810,7 +1323,9 @@ export default function App() {
                         disabled={formLoading}
                         className="w-full bg-emerald-600 text-white py-2 rounded-lg text-xs font-bold hover:bg-emerald-500 disabled:opacity-50 transition-all"
                       >
-                        {formLoading ? 'جاري الحفظ...' : 'تثبيت التحديث'}
+                        <ButtonLoadingContent loading={formLoading} loadingText="جاري الحفظ...">
+                          تثبيت التحديث
+                        </ButtonLoadingContent>
                       </button>
                     </motion.form>
                   )}
@@ -818,8 +1333,6 @@ export default function App() {
                   <div className="space-y-4">
                     {selectedCustomer.statusHistory && selectedCustomer.statusHistory.length > 0 ? (
                       selectedCustomer.statusHistory.slice().reverse().map((entry, idx) => {
-                        const statusOpt = statusOptions.find(o => o.value === entry.status);
-                        const StatusIcon = ICON_MAP[statusOpt?.icon || 'Info'] || Info;
                         const date = new Date(entry.timestamp);
                         
                         return (
@@ -858,16 +1371,18 @@ export default function App() {
               </div>
 
               <div className="p-5 border-t border-slate-200 bg-white grid grid-cols-2 gap-3">
-                <button 
-                  onClick={() => {
-                    setActiveCustomer(selectedCustomer);
-                    setIsModalOpen(true);
-                  }}
-                  className="bg-slate-900 text-white py-2.5 rounded-lg text-xs font-bold hover:bg-slate-800 transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2"
-                >
-                  <Edit2 className="w-3.5 h-3.5" />
-                  تعديل الملف
-                </button>
+                {showCustomerForm && (
+                  <button
+                    onClick={() => {
+                      setActiveCustomer(selectedCustomer);
+                      setIsModalOpen(true);
+                    }}
+                    className="bg-slate-900 text-white py-2.5 rounded-lg text-xs font-bold hover:bg-slate-800 transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                    تعديل الملف
+                  </button>
+                )}
                 <button 
                   className="border border-slate-200 text-slate-600 py-2.5 rounded-lg text-xs font-bold hover:bg-slate-50 transition-all flex items-center justify-center gap-2"
                   onClick={() => window.print()}
@@ -875,6 +1390,16 @@ export default function App() {
                   <FileText className="w-3.5 h-3.5" />
                   طباعة
                 </button>
+                {admin && selectedCustomer.id && (
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteCustomer(selectedCustomer.id!)}
+                    className="border border-rose-200 text-rose-600 py-2.5 rounded-lg text-xs font-bold hover:bg-rose-50 transition-all flex items-center justify-center gap-2"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    حذف
+                  </button>
+                )}
               </div>
             </>
           )}
@@ -889,14 +1414,14 @@ export default function App() {
             <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
             <span>متصل بالخادم</span>
           </div>
-          <span>المستخدم: {user.displayName}</span>
+          <span>المستخدم: {displayNameForUser(user, profile)}</span>
           <span>{format(new Date(), 'HH:mm')} ص</span>
         </div>
       </footer>
 
       {/* Modal / Form - Keep as is but styling tweak */}
       <AnimatePresence>
-        {isModalOpen && (
+        {isModalOpen && showCustomerForm && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
             <motion.div 
               initial={{ opacity: 0 }}
@@ -1009,8 +1534,10 @@ export default function App() {
                         className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/10 focus:border-emerald-500"
                       >
                         <option value="">اختر محامياً...</option>
-                        {lawyers.map(l => (
-                          <option key={l} value={l}>{l}</option>
+                        {lawyerNames.map((l) => (
+                          <option key={l} value={l}>
+                            {l}
+                          </option>
                         ))}
                       </select>
                     </div>
@@ -1062,8 +1589,16 @@ export default function App() {
                     disabled={formLoading}
                     className="bg-emerald-600 text-white px-10 py-3 rounded-xl text-sm font-bold hover:bg-emerald-500 transition-all shadow-xl shadow-emerald-500/10 flex items-center gap-2 group active:scale-95 disabled:opacity-50"
                   >
-                    {formLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4 group-hover:scale-110 transition-transform" />}
-                    حفظ الملف النهائي
+                    <ButtonLoadingContent
+                      loading={formLoading}
+                      loadingText="جاري الحفظ..."
+                      spinnerSize="sm"
+                    >
+                      <>
+                        <CheckCircle className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                        حفظ الملف النهائي
+                      </>
+                    </ButtonLoadingContent>
                   </button>
                 </div>
               </form>
@@ -1100,49 +1635,231 @@ export default function App() {
               </div>
 
               <div className="p-8 max-h-[70vh] overflow-y-auto space-y-8 custom-scrollbar">
-                {/* Lawyers Config */}
-                <section>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">إدارة المحامين</label>
-                  <div className="space-y-3">
-                    <div className="flex gap-2">
-                      <input 
-                        id="new-lawyer"
-                        type="text" 
-                        placeholder="اسم المحامي الجديد..."
-                        className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/10"
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            handleAddLawyer(e.currentTarget.value);
-                            e.currentTarget.value = '';
-                          }
-                        }}
-                      />
-                      <button 
-                        onClick={() => {
-                          const el = document.getElementById('new-lawyer') as HTMLInputElement;
-                          handleAddLawyer(el.value);
-                          el.value = '';
-                        }}
-                        className="bg-slate-900 text-white px-4 rounded-xl text-xs font-bold hover:bg-slate-800"
-                      >
-                        إضافة
-                      </button>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {lawyers.map(l => (
-                        <div key={l} className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200 text-sm font-medium">
-                          <span>{l}</span>
-                          <button onClick={() => handleRemoveLawyer(l)} className="text-slate-400 hover:text-rose-500">
-                            <X className="w-3.5 h-3.5" />
-                          </button>
+                {canManageUsers(profile) && (
+                  <section className="bg-emerald-50/50 p-6 rounded-2xl border border-emerald-100">
+                    <label className="block text-[10px] font-bold text-emerald-800 uppercase tracking-widest mb-1">
+                      {editingUser ? 'تعديل مستخدم' : 'إنشاء مستخدم جديد'}
+                    </label>
+                    <p className="text-xs text-slate-600 mb-4 leading-relaxed">
+                      يُحفظ الحساب فوراً. يمكن للمستخدم تسجيل الدخول بالبريد وكلمة المرور فقط (لا تسجيل ذاتي).
+                    </p>
+                    <form key={editingUserId ?? 'new'} onSubmit={handleSaveUser} className="space-y-3">
+                      <motion.div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {!editingUser && (
+                          <>
+                            <div>
+                              <label className="text-[10px] font-bold text-slate-500 block mb-1">البريد الإلكتروني</label>
+                              <input
+                                name="email"
+                                type="email"
+                                required
+                                dir="ltr"
+                                placeholder="user@example.com"
+                                className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-bold text-slate-500 block mb-1">كلمة المرور</label>
+                              <PasswordInput name="password" required minLength={6} inputClassName="bg-white" />
+                            </div>
+                            <div className="sm:col-span-2">
+                              <label className="text-[10px] font-bold text-slate-500 block mb-1">تأكيد كلمة المرور</label>
+                              <PasswordInput name="confirmPassword" required minLength={6} inputClassName="bg-white" />
+                            </div>
+                          </>
+                        )}
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-500 block mb-1">الاسم</label>
+                          <input
+                            name="displayName"
+                            type="text"
+                            defaultValue={editingUser?.displayName || editingUser?.lawyerName || ''}
+                            className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm"
+                          />
                         </div>
-                      ))}
-                      {lawyers.length === 0 && <p className="text-xs text-slate-400 italic">لا يوجد محامون مضافون حالياً</p>}
-                    </div>
-                  </div>
-                </section>
+                        <motion.div>
+                          <label className="text-[10px] font-bold text-slate-500 block mb-1">الصلاحية</label>
+                          <select
+                            name="role"
+                            defaultValue={editingUser?.role ?? 'lawyer'}
+                            className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm"
+                          >
+                            <option value="admin">مسؤول (Admin)</option>
+                            <option value="lawyer">محامي</option>
+                          </select>
+                        </motion.div>
+                        <div className="sm:col-span-2 flex items-center gap-2">
+                          <input
+                            name="active"
+                            type="checkbox"
+                            defaultChecked={editingUser?.active ?? true}
+                            className="rounded border-slate-300"
+                          />
+                          <label className="text-sm text-slate-700 font-medium">حساب نشط</label>
+                        </div>
+                      </motion.div>
+                      {userFormError && (
+                        <p className="text-xs text-rose-600 font-medium">{userFormError}</p>
+                      )}
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="submit"
+                          disabled={userFormLoading}
+                          className="bg-emerald-600 text-white px-6 py-2.5 rounded-xl text-xs font-bold hover:bg-emerald-500 disabled:opacity-50"
+                        >
+                          <ButtonLoadingContent loading={userFormLoading} loadingText="جاري الحفظ...">
+                            {editingUser ? 'حفظ التعديلات' : 'إنشاء المستخدم'}
+                          </ButtonLoadingContent>
+                        </button>
+                        {editingUser && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingUserId(null);
+                              setUserFormError(null);
+                            }}
+                            className="border border-slate-200 text-slate-600 px-6 py-2.5 rounded-xl text-xs font-bold"
+                          >
+                            إلغاء
+                          </button>
+                        )}
+                      </div>
+                    </form>
 
-                {/* Statuses Config */}
+                    {visibleAppUsers.length > 0 && (
+                      <div className="mt-6 space-y-2">
+                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">المستخدمون</p>
+                        {visibleAppUsers.map((acc) => (
+                          <div
+                            key={acc.id}
+                            className="bg-white rounded-xl border border-slate-200 text-sm overflow-hidden"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2 p-3">
+                            <div className="min-w-0">
+                              <motion.div className="font-bold text-slate-800 truncate" dir="ltr">
+                                {acc.email}
+                              </motion.div>
+                              <div className="text-xs text-slate-500 flex flex-wrap items-center gap-2">
+                                <span>{acc.displayName || acc.lawyerName || '—'}</span>
+                                <span>
+                                  {acc.role === 'admin' ? 'مسؤول' : 'محامي'}
+                                </span>
+                                <span
+                                  className={cn(
+                                    'px-1.5 py-0.5 rounded text-[10px] font-bold',
+                                    acc.active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
+                                  )}
+                                >
+                                  {acc.active ? 'نشط' : 'معطّل'}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap gap-2 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingUserId(acc.id);
+                                  setResettingPasswordUserId(null);
+                                  setUserFormError(null);
+                                  setPasswordResetError(null);
+                                }}
+                                className="text-xs text-slate-600 hover:underline font-bold"
+                              >
+                                تعديل
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setResettingPasswordUserId(
+                                    resettingPasswordUserId === acc.id ? null : acc.id
+                                  );
+                                  setEditingUserId(null);
+                                  setUserFormError(null);
+                                  setPasswordResetError(null);
+                                }}
+                                className={cn(
+                                  'text-xs hover:underline font-bold',
+                                  resettingPasswordUserId === acc.id
+                                    ? 'text-slate-600'
+                                    : 'text-blue-600'
+                                )}
+                              >
+                                {resettingPasswordUserId === acc.id ? 'إلغاء' : 'كلمة المرور'}
+                              </button>
+                              {!acc.active && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleActivateUser(acc.id)}
+                                  className="text-xs text-emerald-600 hover:underline font-bold"
+                                >
+                                  تفعيل
+                                </button>
+                              )}
+                              {acc.active && acc.id !== user?.uid && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeactivateUser(acc.id)}
+                                  className="text-xs text-rose-600 hover:underline font-bold"
+                                >
+                                  تعطيل
+                                </button>
+                              )}
+                            </div>
+                            </div>
+                            {resettingPasswordUserId === acc.id && (
+                              <form
+                                onSubmit={(e) => handleSetUserPassword(e, acc.id)}
+                                className="border-t border-slate-100 bg-slate-50/80 p-3 space-y-3"
+                              >
+                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                                  تعيين كلمة مرور جديدة
+                                </p>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                  <div>
+                                    <label className="text-[10px] font-bold text-slate-500 block mb-1">
+                                      كلمة المرور الجديدة
+                                    </label>
+                                    <PasswordInput
+                                      name="newPassword"
+                                      required
+                                      minLength={6}
+                                      inputClassName="bg-white"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-[10px] font-bold text-slate-500 block mb-1">
+                                      تأكيد كلمة المرور
+                                    </label>
+                                    <PasswordInput
+                                      name="confirmNewPassword"
+                                      required
+                                      minLength={6}
+                                      inputClassName="bg-white"
+                                    />
+                                  </div>
+                                </div>
+                                {passwordResetError && (
+                                  <p className="text-xs text-rose-600 font-medium">{passwordResetError}</p>
+                                )}
+                                <button
+                                  type="submit"
+                                  disabled={passwordResetLoading}
+                                  className="bg-blue-600 text-white px-5 py-2 rounded-xl text-xs font-bold hover:bg-blue-500 disabled:opacity-50"
+                                >
+                                  <ButtonLoadingContent loading={passwordResetLoading} loadingText="جاري الحفظ...">
+                                    حفظ كلمة المرور
+                                  </ButtonLoadingContent>
+                                </button>
+                              </form>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                )}
+
+                {canManageSettings(profile) && (
                 <section>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">إدارة حالات المتابعة</label>
                   <div className="space-y-4">
@@ -1192,7 +1909,9 @@ export default function App() {
                     </div>
                   </div>
                 </section>
-                {/* Import Guide */}
+                )}
+
+                {admin && (
                 <section className="bg-slate-50 p-6 rounded-2xl border border-slate-100">
                   <div className="flex justify-between items-start mb-4">
                     <div>
@@ -1240,6 +1959,7 @@ export default function App() {
                     </div>
                   </div>
                 </section>
+                )}
               </div>
 
               <div className="p-8 border-t border-slate-100 flex justify-end">

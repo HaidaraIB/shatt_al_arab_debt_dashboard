@@ -1,18 +1,40 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Default deny
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // Helper functions
     function isSignedIn() {
       return request.auth != null;
     }
 
     function isValidId(id) {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function userExists() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function isActiveUser() {
+      return userExists() && userDoc().data.active == true;
+    }
+
+    function isAdmin() {
+      return isActiveUser() && userDoc().data.role == 'admin';
+    }
+
+    function isLawyer() {
+      return isActiveUser() && userDoc().data.role == 'lawyer';
+    }
+
+    function lawyerName() {
+      return userDoc().data.lawyerName;
     }
 
     function incoming() {
@@ -23,7 +45,6 @@ service cloud.firestore {
       return resource.data;
     }
 
-    // Customer validation helper
     function isValidCustomer(data) {
       return data.keys().hasAll(['name', 'phone', 'unitNumber', 'delayedInstallments', 'remainingBalance', 'legalStatus'])
         && data.name is string && data.name.size() > 0 && data.name.size() <= 200
@@ -38,26 +59,106 @@ service cloud.firestore {
         && (data.get('statusHistory', []) is list);
     }
 
+    function customerCoreUnchanged() {
+      return incoming().name == existing().name
+        && incoming().phone == existing().phone
+        && incoming().unitNumber == existing().unitNumber
+        && incoming().delayedInstallments == existing().delayedInstallments
+        && incoming().remainingBalance == existing().remainingBalance
+        && incoming().get('lawyerName', '') == existing().get('lawyerName', '')
+        && incoming().get('lastInstallmentDate', '') == existing().get('lastInstallmentDate', '')
+        && incoming().get('lastInstallmentAmount', 0) == existing().get('lastInstallmentAmount', 0)
+        && incoming().createdAt == existing().createdAt;
+    }
+
+    function isLawyerStatusUpdate() {
+      return isLawyer()
+        && existing().lawyerName == lawyerName()
+        && isValidCustomer(incoming())
+        && incoming().updatedAt == request.time
+        && customerCoreUnchanged()
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['legalStatus', 'lastContactNotes', 'statusHistory', 'updatedAt']);
+    }
+
+    function customerAssignedToLawyer() {
+      return resource.data.lawyerName == lawyerName();
+    }
+
+    function customerDocAssignedToLawyer(customerId) {
+      return isLawyer()
+        && get(/databases/$(database)/documents/customers/$(customerId)).data.lawyerName == lawyerName();
+    }
+
+    function isValidPayment(data) {
+      return data.keys().hasAll(['amount', 'paidAt', 'recordedBy', 'createdAt'])
+        && data.amount is number && data.amount > 0
+        && data.paidAt is string && data.paidAt.size() > 0 && data.paidAt.size() <= 32
+        && data.recordedBy is string && data.recordedBy.size() > 0 && data.recordedBy.size() <= 200
+        && (data.get('notes', '') is string)
+        && data.createdAt == request.time;
+    }
+
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['role', 'email', 'active'])
+        && data.role in ['admin', 'lawyer']
+        && data.email is string && data.email.size() > 0 && data.email.size() <= 320
+        && data.active is bool
+        && (data.get('displayName', '') is string)
+        && (data.get('lawyerName', '') is string);
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isAdmin()
+        && isValidId(userId)
+        && isValidUserProfile(incoming());
+      allow update: if isAdmin()
+        && isValidId(userId)
+        && isValidUserProfile(incoming());
+      allow delete: if isAdmin() && isValidId(userId);
+    }
+
     match /customers/{customerId} {
-      allow read: if isSignedIn();
-      
-      allow create: if isSignedIn() 
+      allow read: if isAdmin()
+        || (isLawyer() && customerAssignedToLawyer());
+
+      allow create: if isAdmin()
         && isValidId(customerId)
         && isValidCustomer(incoming())
-        && incoming().createdAt == request.time;
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
 
-      allow update: if isSignedIn()
+      allow update: if isAdmin()
         && isValidId(customerId)
         && isValidCustomer(incoming())
         && incoming().updatedAt == request.time
-        && incoming().createdAt == existing().createdAt;
+        && incoming().createdAt == existing().createdAt
+        || isLawyerStatusUpdate();
 
-      allow delete: if isSignedIn();
+      allow delete: if isAdmin() && isValidId(customerId);
+
+      match /payments/{paymentId} {
+        allow read: if isAdmin()
+          || customerDocAssignedToLawyer(customerId);
+
+        allow create: if isAdmin()
+          && isValidId(paymentId)
+          && isValidPayment(incoming());
+
+        allow update, delete: if false;
+      }
     }
 
     match /config/{configId} {
-      allow read: if isSignedIn();
-      allow write: if isSignedIn();
+      allow read: if isActiveUser();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /test/connection {
+      allow read: if isAdmin();
+      allow write: if false;
     }
   }
 }
