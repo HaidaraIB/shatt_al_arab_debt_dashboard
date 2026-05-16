@@ -192,9 +192,14 @@ const StatusBadge = ({ status, options }: { status: string; options: StatusOptio
   };
 
   return (
-    <div className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border", getStatusStyles(status))}>
-      <Icon className="w-3.5 h-3.5" />
-      <span>{option.label}</span>
+    <div
+      className={cn(
+        'inline-flex max-w-max flex-nowrap items-center gap-1.5 whitespace-nowrap px-2.5 py-1 rounded-full text-xs font-medium border',
+        getStatusStyles(status)
+      )}
+    >
+      <Icon className="w-3.5 h-3.5 shrink-0" />
+      <span className="whitespace-nowrap">{option.label}</span>
     </div>
   );
 };
@@ -1095,7 +1100,7 @@ export default function App() {
                   <th className="p-3 text-slate-500 font-bold text-xs text-center">رقم الوحدة</th>
                   <th className="p-3 text-slate-500 font-bold text-xs text-center">التلكؤ</th>
                   <th className="p-3 text-slate-500 font-bold text-xs">المبلغ المتبقي</th>
-                  <th className="p-3 text-slate-500 font-bold text-xs">الحالة القانونية</th>
+                  <th className="p-3 text-slate-500 font-bold text-xs whitespace-nowrap">الحالة القانونية</th>
                   <th className="p-3 text-slate-500 font-bold text-xs"></th>
                 </tr>
               </thead>
@@ -1128,7 +1133,7 @@ export default function App() {
                       </span>
                     </td>
                     <td className="p-3 font-mono font-bold text-slate-800">{c.remainingBalance.toLocaleString()} د.ع</td>
-                    <td className="p-3">
+                    <td className="p-3 whitespace-nowrap">
                       <StatusBadge status={c.legalStatus} options={statusOptions} />
                     </td>
                     <td className="p-3 text-left">

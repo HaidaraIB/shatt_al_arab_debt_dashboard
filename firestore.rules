@@ -45,6 +45,12 @@ service cloud.firestore {
       return resource.data;
     }
 
+    function isValidLegalStatus(status) {
+      return status is string
+        && status.size() > 0
+        && status.size() <= 64;
+    }
+
     function isValidCustomer(data) {
       return data.keys().hasAll(['name', 'phone', 'unitNumber', 'delayedInstallments', 'remainingBalance', 'legalStatus'])
         && data.name is string && data.name.size() > 0 && data.name.size() <= 200
@@ -52,10 +58,11 @@ service cloud.firestore {
         && data.unitNumber is string && data.unitNumber.size() > 0 && data.unitNumber.size() <= 50
         && data.delayedInstallments is number && data.delayedInstallments >= 0
         && data.remainingBalance is number && data.remainingBalance >= 0
-        && data.legalStatus in ['none', 'notified', 'warned', 'lawsuit']
+        && isValidLegalStatus(data.legalStatus)
         && (data.get('lawyerName', '') is string)
         && (data.get('lastContactNotes', '') is string)
         && (data.get('lastInstallmentAmount', 0) is number)
+        && (data.get('lastInstallmentDate', '') is string)
         && (data.get('statusHistory', []) is list);
     }
 

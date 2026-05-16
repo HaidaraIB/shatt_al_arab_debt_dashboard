@@ -28,7 +28,7 @@
         "lastInstallmentAmount": { "type": "number" },
         "legalStatus": {
           "type": "string",
-          "enum": ["none", "notified", "warned", "lawsuit"]
+          "description": "Built-in: none, notified, warned, lawsuit; admins may add more via config/statuses"
         },
         "lawyerName": { "type": "string" },
         "lastContactNotes": { "type": "string" },
