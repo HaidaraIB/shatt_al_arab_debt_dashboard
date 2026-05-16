@@ -40,11 +40,15 @@ import {
   isProfileActive,
   isAdmin,
   isLawyer,
+  isSupervisor,
+  canViewAllCustomers,
   canManageCustomers,
+  canDeleteCustomers,
   canRecordPayments,
   canManageSettings,
   canUpdateStatus,
   canManageUsers,
+  canViewLawyerDirectory,
 } from './lib/auth';
 import {
   adminCreateUser,
@@ -213,6 +217,7 @@ export default function App() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [statusOptions, setStatusOptions] = useState<StatusOption[]>(LEGAL_STATUS_OPTIONS);
+  const [configLawyerNames, setConfigLawyerNames] = useState<string[]>([]);
   const [activeCustomer, setActiveCustomer] = useState<Customer | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [formLoading, setFormLoading] = useState(false);
@@ -238,14 +243,16 @@ export default function App() {
   const { showSnackbar } = useSnackbar();
   const admin = isAdmin(profile);
   const lawyer = isLawyer(profile);
+  const supervisor = isSupervisor(profile);
   const showPayments = canRecordPayments(profile);
   const showCustomerForm = canManageCustomers(profile);
+  const showDeleteCustomer = canDeleteCustomers(profile);
 
   const customersSubscriptionEnabled =
     Boolean(user) && !profileLoading && isProfileActive(profile);
   const customersQuery = useMemo(() => {
     if (!customersSubscriptionEnabled || !profile) return null;
-    if (isAdmin(profile)) {
+    if (canViewAllCustomers(profile)) {
       return query(collection(db, 'customers'), orderBy('createdAt', 'desc'));
     }
     if (profile.lawyerName) {
@@ -260,7 +267,7 @@ export default function App() {
 
   const paymentsSubscriptionEnabled =
     Boolean(selectedCustomer?.id) && isProfileActive(profile);
-  const usersSubscriptionEnabled = Boolean(user) && admin;
+  const usersSubscriptionEnabled = Boolean(user) && canViewLawyerDirectory(profile);
 
   const visibleCustomers = useMemo(
     () => (customersSubscriptionEnabled && customersQuery ? customers : []),
@@ -281,6 +288,10 @@ export default function App() {
 
   const lawyerNames = useMemo(() => {
     const names = new Set<string>();
+    configLawyerNames.forEach((n) => {
+      const trimmed = n.trim();
+      if (trimmed) names.add(trimmed);
+    });
     visibleAppUsers
       .filter((u) => u.role === 'lawyer' && u.active)
       .forEach((u) => {
@@ -291,7 +302,7 @@ export default function App() {
       if (c.lawyerName?.trim()) names.add(c.lawyerName.trim());
     });
     return Array.from(names).sort((a, b) => a.localeCompare(b, 'ar'));
-  }, [visibleAppUsers, visibleCustomers]);
+  }, [configLawyerNames, visibleAppUsers, visibleCustomers]);
 
   useEffect(() => {
     selectedCustomerIdRef.current = selectedCustomer?.id ?? null;
@@ -389,7 +400,25 @@ export default function App() {
       }
     });
 
-    return () => unsubStatuses();
+    const unsubLawyers = onSnapshot(doc(db, 'config', 'lawyers'), (snap) => {
+      if (!snap.exists()) {
+        setConfigLawyerNames([]);
+        return;
+      }
+      const list = snap.data().list;
+      if (!Array.isArray(list)) {
+        setConfigLawyerNames([]);
+        return;
+      }
+      setConfigLawyerNames(
+        list.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      );
+    });
+
+    return () => {
+      unsubStatuses();
+      unsubLawyers();
+    };
   }, [user, profile]);
 
   useEffect(() => {
@@ -629,7 +658,7 @@ export default function App() {
   };
 
   const handleDeleteCustomer = async (id: string) => {
-    if (!admin) return;
+    if (!showDeleteCustomer) return;
     const ok = await confirmAction({
       title: 'حذف الزبون',
       message: 'هل أنت متأكد من حذف معلومات هذا الزبون؟',
@@ -995,20 +1024,22 @@ export default function App() {
             <span className="text-slate-400 text-[10px] uppercase tracking-widest font-bold">إجمالي المبالغ المتأخرة</span>
             <span className="text-emerald-400 font-mono text-lg font-bold">{totalBalance.toLocaleString()} د.ع</span>
           </div>
+          {showCustomerForm && (
+            <button
+              onClick={() => {
+                setActiveCustomer(null);
+                setIsModalOpen(true);
+              }}
+              className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2 rounded-md font-bold flex items-center gap-2 transition-colors shadow-md"
+            >
+              <Plus className="w-4 h-4" />
+              <span className="hidden sm:inline">إضافة زبون جديد</span>
+              <span className="sm:hidden">إضافة</span>
+            </button>
+          )}
+
           {admin && (
             <>
-              <button
-                onClick={() => {
-                  setActiveCustomer(null);
-                  setIsModalOpen(true);
-                }}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2 rounded-md font-bold flex items-center gap-2 transition-colors shadow-md"
-              >
-                <Plus className="w-4 h-4" />
-                <span className="hidden sm:inline">إضافة زبون جديد</span>
-                <span className="sm:hidden">إضافة</span>
-              </button>
-
               <input
                 type="file"
                 ref={fileInputRef}
@@ -1027,6 +1058,10 @@ export default function App() {
                 <span className="hidden md:inline">استيراد</span>
               </button>
             </>
+          )}
+
+          {supervisor && (
+            <span className="text-sky-300 text-xs font-bold hidden md:inline">مشرف</span>
           )}
 
           {lawyer && profile?.lawyerName && (
@@ -1395,7 +1430,7 @@ export default function App() {
                   <FileText className="w-3.5 h-3.5" />
                   طباعة
                 </button>
-                {admin && selectedCustomer.id && (
+                {showDeleteCustomer && selectedCustomer.id && (
                   <button
                     type="button"
                     onClick={() => handleDeleteCustomer(selectedCustomer.id!)}
@@ -1690,6 +1725,7 @@ export default function App() {
                             className="w-full bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm"
                           >
                             <option value="admin">مسؤول (Admin)</option>
+                            <option value="supervisor">مشرف (Supervisor)</option>
                             <option value="lawyer">محامي</option>
                           </select>
                         </motion.div>
@@ -1747,7 +1783,11 @@ export default function App() {
                               <div className="text-xs text-slate-500 flex flex-wrap items-center gap-2">
                                 <span>{acc.displayName || acc.lawyerName || '—'}</span>
                                 <span>
-                                  {acc.role === 'admin' ? 'مسؤول' : 'محامي'}
+                                  {acc.role === 'admin'
+                                    ? 'مسؤول'
+                                    : acc.role === 'supervisor'
+                                      ? 'مشرف'
+                                      : 'محامي'}
                                 </span>
                                 <span
                                   className={cn(

@@ -47,7 +47,19 @@ export function isLawyer(profile: UserProfile | null): boolean {
   return isProfileActive(profile) && profile.role === 'lawyer';
 }
 
+export function isSupervisor(profile: UserProfile | null): boolean {
+  return isProfileActive(profile) && profile.role === 'supervisor';
+}
+
+export function canViewAllCustomers(profile: UserProfile | null): boolean {
+  return isAdmin(profile) || isSupervisor(profile);
+}
+
 export function canManageCustomers(profile: UserProfile | null): boolean {
+  return canViewAllCustomers(profile);
+}
+
+export function canDeleteCustomers(profile: UserProfile | null): boolean {
   return isAdmin(profile);
 }
 
@@ -63,6 +75,11 @@ export function canManageUsers(profile: UserProfile | null): boolean {
   return isAdmin(profile);
 }
 
+/** Read user list to populate lawyer names in customer forms (no user management). */
+export function canViewLawyerDirectory(profile: UserProfile | null): boolean {
+  return isAdmin(profile) || isSupervisor(profile);
+}
+
 export function canUpdateStatus(profile: UserProfile | null): boolean {
-  return isAdmin(profile) || isLawyer(profile);
+  return isAdmin(profile) || isSupervisor(profile) || isLawyer(profile);
 }

@@ -80,7 +80,7 @@ testConnection();
 
 export { arrayUnion, setDoc, getDoc, arrayRemove };
 
-export type UserRole = 'admin' | 'lawyer';
+export type UserRole = 'admin' | 'lawyer' | 'supervisor';
 
 export interface UserProfile {
   role: UserRole;

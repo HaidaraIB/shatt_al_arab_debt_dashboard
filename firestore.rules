@@ -33,6 +33,18 @@ service cloud.firestore {
       return isActiveUser() && userDoc().data.role == 'lawyer';
     }
 
+    function isSupervisor() {
+      return isActiveUser() && userDoc().data.role == 'supervisor';
+    }
+
+    function canViewAllCustomers() {
+      return isAdmin() || isSupervisor();
+    }
+
+    function canManageCustomers() {
+      return canViewAllCustomers();
+    }
+
     function lawyerName() {
       return userDoc().data.lawyerName;
     }
@@ -108,7 +120,7 @@ service cloud.firestore {
 
     function isValidUserProfile(data) {
       return data.keys().hasAll(['role', 'email', 'active'])
-        && data.role in ['admin', 'lawyer']
+        && data.role in ['admin', 'lawyer', 'supervisor']
         && data.email is string && data.email.size() > 0 && data.email.size() <= 320
         && data.active is bool
         && (data.get('displayName', '') is string)
@@ -116,8 +128,8 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
-      allow list: if isAdmin();
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin() || isSupervisor());
+      allow list: if isAdmin() || isSupervisor();
       allow create: if isAdmin()
         && isValidId(userId)
         && isValidUserProfile(incoming());
@@ -128,26 +140,26 @@ service cloud.firestore {
     }
 
     match /customers/{customerId} {
-      allow read: if isAdmin()
+      allow read: if canViewAllCustomers()
         || (isLawyer() && customerAssignedToLawyer());
 
-      allow create: if isAdmin()
+      allow create: if canManageCustomers()
         && isValidId(customerId)
         && isValidCustomer(incoming())
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
 
-      allow update: if isAdmin()
+      allow update: if (canManageCustomers()
         && isValidId(customerId)
         && isValidCustomer(incoming())
         && incoming().updatedAt == request.time
-        && incoming().createdAt == existing().createdAt
+        && incoming().createdAt == existing().createdAt)
         || isLawyerStatusUpdate();
 
       allow delete: if isAdmin() && isValidId(customerId);
 
       match /payments/{paymentId} {
-        allow read: if isAdmin()
+        allow read: if canViewAllCustomers()
           || customerDocAssignedToLawyer(customerId);
 
         allow create: if isAdmin()

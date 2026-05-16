@@ -2,10 +2,10 @@
   "entities": {
     "UserProfile": {
       "title": "UserProfile",
-      "description": "Application user with role-based access (admin or lawyer).",
+      "description": "Application user with role-based access (admin, supervisor, or lawyer).",
       "type": "object",
       "properties": {
-        "role": { "type": "string", "enum": ["admin", "lawyer"] },
+        "role": { "type": "string", "enum": ["admin", "lawyer", "supervisor"] },
         "email": { "type": "string" },
         "displayName": { "type": "string" },
         "lawyerName": { "type": "string", "description": "Required for lawyers; must match customers.lawyerName" },
@@ -83,6 +83,7 @@
   },
   "rbac": {
     "admin": ["customers CRUD", "payments create", "config write"],
+    "supervisor": ["customers read all", "customers create and update", "read all payments"],
     "lawyer": ["read assigned customers", "update legalStatus and notes only", "read payments on assigned customers"]
   }
 }
