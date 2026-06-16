@@ -61,10 +61,10 @@ In Firestore, create or edit:
 ```json
 {
   "list": [
-    { "value": "none", "label": "لا توجد", "icon": "CheckCircle" },
-    { "value": "notified", "label": "تم التبليغ", "icon": "AlertCircle" },
-    { "value": "warned", "label": "توجيه إنذار", "icon": "FileText" },
-    { "value": "lawsuit", "label": "رفع دعوى قضائية", "icon": "Gavel" }
+    { "value": "none", "label": "لا توجد", "icon": "CheckCircle", "color": "emerald" },
+    { "value": "notified", "label": "تم التبليغ", "icon": "AlertCircle", "color": "amber" },
+    { "value": "warned", "label": "توجيه إنذار", "icon": "FileText", "color": "orange" },
+    { "value": "lawsuit", "label": "رفع دعوى قضائية", "icon": "Gavel", "color": "rose" }
   ]
 }
 ```

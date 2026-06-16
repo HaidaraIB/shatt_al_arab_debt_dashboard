@@ -86,20 +86,142 @@ import {
   useConfirm,
   useSnackbar,
 } from './components/feedback';
+import { CustomerPrintView } from './components/CustomerPrintView';
 
 // --- Types & Constants ---
 
-const LEGAL_STATUS_OPTIONS = [
-  { value: 'none', label: 'لا توجد', icon: 'CheckCircle', color: 'text-emerald-500' },
-  { value: 'notified', label: 'تم التبليغ', icon: 'AlertCircle', color: 'text-amber-500' },
-  { value: 'warned', label: 'توجيه إنذار', icon: 'FileText', color: 'text-orange-500' },
-  { value: 'lawsuit', label: 'رفع دعوى قضائية', icon: 'Gavel', color: 'text-rose-500' },
+const STATUS_COLOR_PALETTE = {
+  emerald: {
+    badge: 'bg-emerald-50 border-emerald-200 text-emerald-700',
+    dot: 'border-emerald-500 text-emerald-500',
+    row: 'border-emerald-500',
+    swatch: 'bg-emerald-500',
+  },
+  amber: {
+    badge: 'bg-amber-50 border-amber-200 text-amber-700',
+    dot: 'border-amber-500 text-amber-500',
+    row: 'border-amber-500',
+    swatch: 'bg-amber-500',
+  },
+  orange: {
+    badge: 'bg-orange-50 border-orange-200 text-orange-700',
+    dot: 'border-orange-500 text-orange-500',
+    row: 'border-orange-500',
+    swatch: 'bg-orange-500',
+  },
+  rose: {
+    badge: 'bg-rose-50 border-rose-200 text-rose-700',
+    dot: 'border-rose-500 text-rose-500',
+    row: 'border-rose-500',
+    swatch: 'bg-rose-500',
+  },
+  blue: {
+    badge: 'bg-blue-50 border-blue-200 text-blue-700',
+    dot: 'border-blue-500 text-blue-500',
+    row: 'border-blue-500',
+    swatch: 'bg-blue-500',
+  },
+  purple: {
+    badge: 'bg-purple-50 border-purple-200 text-purple-700',
+    dot: 'border-purple-500 text-purple-500',
+    row: 'border-purple-500',
+    swatch: 'bg-purple-500',
+  },
+  cyan: {
+    badge: 'bg-cyan-50 border-cyan-200 text-cyan-700',
+    dot: 'border-cyan-500 text-cyan-500',
+    row: 'border-cyan-500',
+    swatch: 'bg-cyan-500',
+  },
+  indigo: {
+    badge: 'bg-indigo-50 border-indigo-200 text-indigo-700',
+    dot: 'border-indigo-500 text-indigo-500',
+    row: 'border-indigo-500',
+    swatch: 'bg-indigo-500',
+  },
+  pink: {
+    badge: 'bg-pink-50 border-pink-200 text-pink-700',
+    dot: 'border-pink-500 text-pink-500',
+    row: 'border-pink-500',
+    swatch: 'bg-pink-500',
+  },
+  violet: {
+    badge: 'bg-violet-50 border-violet-200 text-violet-700',
+    dot: 'border-violet-500 text-violet-500',
+    row: 'border-violet-500',
+    swatch: 'bg-violet-500',
+  },
+  teal: {
+    badge: 'bg-teal-50 border-teal-200 text-teal-700',
+    dot: 'border-teal-500 text-teal-500',
+    row: 'border-teal-500',
+    swatch: 'bg-teal-500',
+  },
+  slate: {
+    badge: 'bg-slate-50 border-slate-200 text-slate-700',
+    dot: 'border-slate-500 text-slate-500',
+    row: 'border-slate-200',
+    swatch: 'bg-slate-500',
+  },
+} as const;
+
+type StatusColorKey = keyof typeof STATUS_COLOR_PALETTE;
+
+const STATUS_COLOR_KEYS = Object.keys(STATUS_COLOR_PALETTE) as StatusColorKey[];
+
+const LEGAL_STATUS_OPTIONS: StatusOption[] = [
+  { value: 'none', label: 'لا توجد', icon: 'CheckCircle', color: 'emerald' },
+  { value: 'notified', label: 'تم التبليغ', icon: 'AlertCircle', color: 'amber' },
+  { value: 'warned', label: 'توجيه إنذار', icon: 'FileText', color: 'orange' },
+  { value: 'lawsuit', label: 'رفع دعوى قضائية', icon: 'Gavel', color: 'rose' },
 ];
 
 interface StatusOption {
   value: string;
   label: string;
   icon: string;
+  color?: string;
+}
+
+function isStatusColorKey(key: string | undefined): key is StatusColorKey {
+  return !!key && key in STATUS_COLOR_PALETTE;
+}
+
+function getStatusColorKey(status: string, options: StatusOption[]): StatusColorKey {
+  const option = options.find((o) => o.value === status);
+  if (option?.color && isStatusColorKey(option.color)) return option.color;
+  const builtIn = LEGAL_STATUS_OPTIONS.find((o) => o.value === status);
+  if (builtIn?.color && isStatusColorKey(builtIn.color)) return builtIn.color;
+  return 'slate';
+}
+
+function getStatusColorClasses(
+  key: StatusColorKey,
+  variant: 'badge' | 'dot' | 'row' | 'swatch'
+): string {
+  return STATUS_COLOR_PALETTE[key][variant];
+}
+
+function getStatusDotParts(key: StatusColorKey): { border: string; text: string } {
+  const parts = STATUS_COLOR_PALETTE[key].dot.split(' ');
+  return {
+    border: parts.find((c) => c.startsWith('border-')) ?? 'border-slate-500',
+    text: parts.find((c) => c.startsWith('text-')) ?? 'text-slate-500',
+  };
+}
+
+function normalizeStatusOptions(list: StatusOption[]): StatusOption[] {
+  const defaultByValue = Object.fromEntries(LEGAL_STATUS_OPTIONS.map((o) => [o.value, o]));
+  return list.map((opt) => ({
+    ...opt,
+    color: isStatusColorKey(opt.color)
+      ? opt.color
+      : (defaultByValue[opt.value]?.color ?? 'slate'),
+  }));
+}
+
+function firstUnusedStatusColor(usedColors: string[]): StatusColorKey {
+  return STATUS_COLOR_KEYS.find((key) => !usedColors.includes(key)) ?? 'slate';
 }
 
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -181,25 +303,99 @@ function displayNameForUser(user: FirebaseUser, profile: UserProfile | null): st
 
 // --- Components ---
 
+function ColorSwatchPicker({
+  selected,
+  onSelect,
+  size = 'md',
+}: {
+  selected: StatusColorKey;
+  onSelect: (key: StatusColorKey) => void;
+  size?: 'sm' | 'md';
+}) {
+  const swatchSize = size === 'sm' ? 'w-5 h-5' : 'w-6 h-6';
+  return (
+    <div className="grid grid-cols-6 gap-2">
+      {STATUS_COLOR_KEYS.map((key) => (
+        <button
+          key={key}
+          type="button"
+          onClick={() => onSelect(key)}
+          className={cn(
+            swatchSize,
+            'rounded-full shrink-0 mx-auto transition-transform',
+            getStatusColorClasses(key, 'swatch'),
+            selected === key
+              ? 'ring-2 ring-slate-900 ring-offset-2 scale-110'
+              : 'hover:scale-105 opacity-80 hover:opacity-100'
+          )}
+          title={key}
+          aria-label={key}
+          aria-pressed={selected === key}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ColorPickerPopover({
+  selected,
+  onSelect,
+  isOpen,
+  onClose,
+  children,
+}: {
+  selected: StatusColorKey;
+  onSelect: (key: StatusColorKey) => void;
+  isOpen: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="relative">
+      {children}
+      <AnimatePresence>
+        {isOpen && (
+          <>
+            <button
+              type="button"
+              className="fixed inset-0 z-30 cursor-default"
+              onClick={onClose}
+              aria-label="إغلاق"
+            />
+            <motion.div
+              initial={{ opacity: 0, y: -6, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -6, scale: 0.96 }}
+              transition={{ duration: 0.15 }}
+              className="absolute z-40 top-full mt-2 right-0 w-[11.5rem] p-3 bg-white rounded-2xl border border-slate-200 shadow-lg shadow-slate-200/60"
+            >
+              <p className="text-[10px] font-bold text-slate-400 mb-2.5">اختر اللون</p>
+              <ColorSwatchPicker
+                size="sm"
+                selected={selected}
+                onSelect={(key) => {
+                  onSelect(key);
+                  onClose();
+                }}
+              />
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 const StatusBadge = ({ status, options }: { status: string; options: StatusOption[] }) => {
   const option = options.find(o => o.value === status) || { label: status, icon: 'Info' };
   const Icon = ICON_MAP[option.icon] || Info;
-  
-  const getStatusStyles = (val: string) => {
-    switch(val) {
-      case 'none': return "bg-emerald-50 border-emerald-200 text-emerald-700";
-      case 'notified': return "bg-amber-50 border-amber-200 text-amber-700";
-      case 'warned': return "bg-orange-50 border-orange-200 text-orange-700";
-      case 'lawsuit': return "bg-rose-50 border-rose-200 text-rose-700";
-      default: return "bg-slate-50 border-slate-200 text-slate-700";
-    }
-  };
+  const colorKey = getStatusColorKey(status, options);
 
   return (
     <div
       className={cn(
         'inline-flex max-w-max flex-nowrap items-center gap-1.5 whitespace-nowrap px-2.5 py-1 rounded-full text-xs font-medium border',
-        getStatusStyles(status)
+        getStatusColorClasses(colorKey, 'badge')
       )}
     >
       <Icon className="w-3.5 h-3.5 shrink-0" />
@@ -208,15 +404,100 @@ const StatusBadge = ({ status, options }: { status: string; options: StatusOptio
   );
 };
 
+function StatusFilterChip({
+  label,
+  count,
+  colorKey,
+  selected,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  colorKey: StatusColorKey;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'inline-flex items-center gap-2 shrink-0 px-3 py-2 rounded-xl text-xs font-bold transition-all',
+        getStatusColorClasses(colorKey, 'badge'),
+        selected
+          ? 'border-2 border-slate-900 shadow-sm'
+          : 'border opacity-75 hover:opacity-100 hover:shadow-sm'
+      )}
+    >
+      <span>{label}</span>
+      <span
+        className={cn(
+          'min-w-[1.25rem] px-1.5 py-0.5 rounded-full text-[10px] font-mono leading-none',
+          selected ? 'bg-slate-900 text-white' : 'bg-white/70'
+        )}
+      >
+        {count}
+      </span>
+    </button>
+  );
+}
+
+function StatusOptionPicker({
+  name,
+  defaultValue,
+  options,
+}: {
+  name: string;
+  defaultValue: string;
+  options: StatusOption[];
+}) {
+  const [selected, setSelected] = useState(defaultValue);
+
+  useEffect(() => {
+    setSelected(defaultValue);
+  }, [defaultValue]);
+
+  return (
+    <div>
+      <input type="hidden" name={name} value={selected} />
+      <div className="flex flex-wrap gap-2">
+        {options.map((opt) => {
+          const colorKey = getStatusColorKey(opt.value, options);
+          const Icon = ICON_MAP[opt.icon] || Info;
+          const isSelected = selected === opt.value;
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => setSelected(opt.value)}
+              className={cn(
+                'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-all',
+                getStatusColorClasses(colorKey, 'badge'),
+                isSelected ? 'ring-2 ring-slate-900 ring-offset-1' : 'opacity-55 hover:opacity-100'
+              )}
+            >
+              <Icon className="w-3 h-3 shrink-0" />
+              <span>{opt.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [statusOptions, setStatusOptions] = useState<StatusOption[]>(LEGAL_STATUS_OPTIONS);
+  const [newStatusColor, setNewStatusColor] = useState<StatusColorKey>('slate');
+  const [colorPickerTarget, setColorPickerTarget] = useState<string | null>(null);
   const [configLawyerNames, setConfigLawyerNames] = useState<string[]>([]);
   const [activeCustomer, setActiveCustomer] = useState<Customer | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -396,7 +677,9 @@ export default function App() {
 
     const unsubStatuses = onSnapshot(doc(db, 'config', 'statuses'), (snap) => {
       if (snap.exists()) {
-        setStatusOptions(snap.data().list || LEGAL_STATUS_OPTIONS);
+        const list = normalizeStatusOptions(snap.data().list || LEGAL_STATUS_OPTIONS);
+        setStatusOptions(list);
+        setNewStatusColor(firstUnusedStatusColor(list.map((o) => o.color ?? 'slate')));
       }
     });
 
@@ -420,6 +703,10 @@ export default function App() {
       unsubLawyers();
     };
   }, [user, profile]);
+
+  useEffect(() => {
+    if (!isSettingsOpen) setColorPickerTarget(null);
+  }, [isSettingsOpen]);
 
   useEffect(() => {
     if (!usersSubscriptionEnabled) return;
@@ -868,6 +1155,7 @@ export default function App() {
       value,
       label,
       icon: 'Bell',
+      color: newStatusColor,
     };
 
     try {
@@ -876,10 +1164,29 @@ export default function App() {
         { list: arrayUnion(newStatus) },
         { merge: true }
       );
+      setNewStatusColor(firstUnusedStatusColor([...statusOptions.map((o) => o.color ?? 'slate'), newStatusColor]));
       showSnackbar(`تمت إضافة الحالة: ${label.trim()}`, 'success');
     } catch (error) {
       console.error(error);
       showSnackbar('تعذر إضافة الحالة. حاول مرة أخرى.', 'error');
+    }
+  };
+
+  const handleUpdateStatusColor = async (value: string, colorKey: StatusColorKey) => {
+    if (!canManageSettings(profile)) return;
+    const updatedList = statusOptions.map((o) =>
+      o.value === value ? { ...o, color: colorKey } : o
+    );
+
+    try {
+      await setDoc(
+        doc(db, 'config', 'statuses'),
+        { list: updatedList },
+        { merge: true }
+      );
+    } catch (error) {
+      console.error(error);
+      showSnackbar('تعذر تحديث لون الحالة.', 'error');
     }
   };
 
@@ -910,11 +1217,30 @@ export default function App() {
     }
   };
 
-  const filteredCustomers = visibleCustomers.filter(c => 
-    c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    c.unitNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    c.phone.includes(searchTerm)
+  const statusCounts = useMemo(() => {
+    const counts: Record<string, number> = Object.fromEntries(
+      statusOptions.map((o) => [o.value, 0])
+    );
+    for (const c of visibleCustomers) {
+      if (c.legalStatus in counts) counts[c.legalStatus]++;
+    }
+    return counts;
+  }, [visibleCustomers, statusOptions]);
+
+  const filteredCustomers = useMemo(
+    () =>
+      visibleCustomers.filter((c) => {
+        const matchesSearch =
+          c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          c.unitNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          c.phone.includes(searchTerm);
+        const matchesStatus = statusFilter === null || c.legalStatus === statusFilter;
+        return matchesSearch && matchesStatus;
+      }),
+    [visibleCustomers, searchTerm, statusFilter]
   );
+
+  const isTableFiltered = statusFilter !== null || searchTerm.trim().length > 0;
 
   // --- Render Helpers ---
 
@@ -1089,23 +1415,59 @@ export default function App() {
       </header>
 
       {/* Sub-Header Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-white border-b border-slate-200 shrink-0">
-        <div className="bg-slate-50 p-3 rounded border border-slate-200">
-          <div className="text-slate-500 text-[10px] uppercase tracking-widest font-bold mb-1">عدد المتلكأين</div>
-          <div className="text-2xl font-bold font-mono">{visibleCustomers.length} <span className="text-xs font-sans text-slate-400">زبون</span></div>
+      <div className="bg-white border-b border-slate-200 shrink-0">
+        <div className="grid grid-cols-2 gap-4 p-4 pb-4">
+          <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+            <div className="text-slate-500 text-[10px] uppercase tracking-widest font-bold mb-1">عدد المتلكأين</div>
+            <div className="text-2xl font-bold font-mono">
+              {visibleCustomers.length}{' '}
+              <span className="text-xs font-sans text-slate-400">زبون</span>
+            </div>
+          </div>
+          <div className="bg-blue-50 p-3 rounded-xl border border-blue-200">
+            <div className="text-blue-700 text-[10px] uppercase tracking-widest font-bold mb-1">متابعات المحامين</div>
+            <div className="text-2xl font-bold text-blue-700 font-mono">
+              {new Set(visibleCustomers.map((c) => c.lawyerName).filter(Boolean)).size}{' '}
+              <span className="text-xs font-sans">محامين</span>
+            </div>
+          </div>
         </div>
-        <div className="bg-amber-50 p-3 rounded border border-amber-200">
-          <div className="text-amber-700 text-[10px] uppercase tracking-widest font-bold mb-1">توجيه إنذار</div>
-          <div className="text-2xl font-bold text-amber-700 font-mono">{visibleCustomers.filter(c => c.legalStatus === 'warned').length}</div>
-        </div>
-        <div className="bg-red-50 p-3 rounded border border-red-200">
-          <div className="text-red-700 text-[10px] uppercase tracking-widest font-bold mb-1">دعاوى فسخ عقد</div>
-          <div className="text-2xl font-bold text-red-700 font-mono">{visibleCustomers.filter(c => c.legalStatus === 'lawsuit').length}</div>
-        </div>
-        <div className="bg-blue-50 p-3 rounded border border-blue-200">
-          <div className="text-blue-700 text-[10px] uppercase tracking-widest font-bold mb-1">متابعات المحامين</div>
-          <div className="text-2xl font-bold text-blue-700 font-mono">
-            {new Set(visibleCustomers.map(c => c.lawyerName).filter(Boolean)).size} <span className="text-xs font-sans">محامين</span>
+
+        <div className="px-4 pb-4 pt-1 border-t border-slate-100">
+          <div className="flex items-center justify-between gap-3 mb-3 pt-3">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">فلترة حسب الحالة</span>
+            {isTableFiltered && (
+              <button
+                type="button"
+                onClick={() => {
+                  setStatusFilter(null);
+                  setSearchTerm('');
+                }}
+                className="text-[10px] font-bold text-slate-500 hover:text-slate-900 transition-colors"
+              >
+                إعادة تعيين الفلاتر
+              </button>
+            )}
+          </div>
+          <div className="flex gap-2 overflow-x-auto py-1 custom-scrollbar">
+            <StatusFilterChip
+              label="الكل"
+              count={visibleCustomers.length}
+              colorKey="slate"
+              selected={statusFilter === null}
+              onClick={() => setStatusFilter(null)}
+            />
+            {statusOptions.map((opt) => (
+              <React.Fragment key={opt.value}>
+                <StatusFilterChip
+                  label={opt.label}
+                  count={statusCounts[opt.value] ?? 0}
+                  colorKey={getStatusColorKey(opt.value, statusOptions)}
+                  selected={statusFilter === opt.value}
+                  onClick={() => setStatusFilter(statusFilter === opt.value ? null : opt.value)}
+                />
+              </React.Fragment>
+            ))}
           </div>
         </div>
       </div>
@@ -1115,7 +1477,13 @@ export default function App() {
         {/* Data Grid Container */}
         <section className="flex-1 border-l border-slate-200 flex flex-col bg-white overflow-hidden">
           <div className="bg-white px-4 py-3 border-b border-slate-200 flex flex-col sm:flex-row justify-between items-center gap-4">
-            <span className="text-sm font-bold text-slate-400 uppercase tracking-widest">جدول المتابعة اليومية</span>
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+              <span className="text-sm font-bold text-slate-400 uppercase tracking-widest">جدول المتابعة اليومية</span>
+              <span className="text-[10px] font-bold text-slate-500 font-mono">
+                عرض {filteredCustomers.length}
+                {isTableFiltered ? ` من ${visibleCustomers.length}` : ''} زبون
+              </span>
+            </div>
             <div className="relative group w-full sm:w-64">
               <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 group-focus-within:text-slate-900 transition-colors" />
               <input 
@@ -1146,10 +1514,9 @@ export default function App() {
                     onClick={() => setSelectedCustomer(c)}
                     className={cn(
                       "hover:bg-slate-50 cursor-pointer border-r-4 transition-all",
-                      selectedCustomer?.id === c.id ? "bg-emerald-50/30 border-emerald-500" : 
-                      c.legalStatus === 'lawsuit' ? "border-red-500" :
-                      c.legalStatus === 'warned' ? "border-amber-500" :
-                      "border-slate-200"
+                      selectedCustomer?.id === c.id
+                        ? "bg-emerald-50/30 border-emerald-500"
+                        : getStatusColorClasses(getStatusColorKey(c.legalStatus, statusOptions), 'row')
                     )}
                   >
                     <td className="p-3">
@@ -1178,7 +1545,9 @@ export default function App() {
                 ))}
                 {filteredCustomers.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="p-12 text-center text-slate-400 italic">لا توجد بيانات مطابقة لهذا البحث</td>
+                    <td colSpan={6} className="p-12 text-center text-slate-400 italic">
+                      {isTableFiltered ? 'لا توجد بيانات مطابقة للفلتر الحالي' : 'لا توجد بيانات مطابقة لهذا البحث'}
+                    </td>
                   </tr>
                 )}
               </tbody>
@@ -1193,12 +1562,15 @@ export default function App() {
         )}>
           {selectedCustomer && (
             <>
-              <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex justify-between items-start">
-                <div>
+              <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex justify-between items-start gap-3">
+                <div className="min-w-0">
                   <h2 className="font-bold text-lg text-slate-900 leading-tight">{selectedCustomer.name}</h2>
                   <p className="text-[10px] text-slate-400 uppercase tracking-widest font-bold mt-1">ملف المتابعة القانونية | {selectedCustomer.unitNumber}</p>
+                  <div className="mt-2">
+                    <StatusBadge status={selectedCustomer.legalStatus} options={statusOptions} />
+                  </div>
                 </div>
-                <button onClick={() => setSelectedCustomer(null)} className="text-slate-300 hover:text-slate-900">
+                <button onClick={() => setSelectedCustomer(null)} className="text-slate-300 hover:text-slate-900 shrink-0">
                   <X className="w-5 h-5" />
                 </button>
               </div>
@@ -1343,15 +1715,13 @@ export default function App() {
                       onSubmit={handleQuickStatusUpdate}
                       className="mb-6 p-4 bg-white border border-slate-200 rounded-xl space-y-3 shadow-sm"
                     >
-                      <select 
-                        name="legalStatus" 
-                        defaultValue={selectedCustomer.legalStatus}
-                        className="w-full text-xs border border-slate-200 rounded-lg p-2 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500/10"
-                      >
-                        {statusOptions.map(opt => (
-                          <option key={opt.value} value={opt.value}>{opt.label}</option>
-                        ))}
-                      </select>
+                      <div key={selectedCustomer.id}>
+                        <StatusOptionPicker
+                          name="legalStatus"
+                          defaultValue={selectedCustomer.legalStatus}
+                          options={statusOptions}
+                        />
+                      </div>
                       <textarea 
                         name="notes"
                         placeholder="ملاحظات التحديث..."
@@ -1374,31 +1744,23 @@ export default function App() {
                     {selectedCustomer.statusHistory && selectedCustomer.statusHistory.length > 0 ? (
                       selectedCustomer.statusHistory.slice().reverse().map((entry, idx) => {
                         const date = new Date(entry.timestamp);
-                        
+                        const entryColorKey = getStatusColorKey(entry.status, statusOptions);
+                        const dotParts = getStatusDotParts(entryColorKey);
+
                         return (
                           <div key={idx} className="relative pr-6 before:absolute before:right-2 before:top-2 before:bottom-0 before:w-px before:bg-slate-100 last:before:hidden">
-                            <div className={cn("absolute right-0 top-1 w-4 h-4 rounded-full bg-white border-2 flex items-center justify-center", 
-                              entry.status === 'lawsuit' ? "border-rose-500" :
-                              entry.status === 'warned' ? "border-amber-500" :
-                              entry.status === 'notified' ? "border-blue-500" :
-                              "border-emerald-500"
-                            )}>
+                            <div className={cn("absolute right-0 top-1 w-4 h-4 rounded-full bg-white border-2 flex items-center justify-center", dotParts.border)}>
                               {(() => {
                                 const opt = statusOptions.find(o => o.value === entry.status);
                                 const Icon = ICON_MAP[opt?.icon || 'Info'] || Info;
-                                return <Icon className={cn("w-2 h-2", 
-                                  entry.status === 'lawsuit' ? "text-rose-500" :
-                                  entry.status === 'warned' ? "text-amber-500" :
-                                  entry.status === 'notified' ? "text-blue-500" :
-                                  "text-emerald-500"
-                                )} />;
+                                return <Icon className={cn("w-2 h-2", dotParts.text)} />;
                               })()}
                             </div>
                             <div className="flex justify-between items-start mb-1 text-[10px] font-mono text-slate-400">
                               <span>{format(date, 'yyyy/MM/dd HH:mm')}</span>
                               <span className="font-sans font-bold">{entry.updatedBy}</span>
                             </div>
-                            <p className="text-xs font-bold text-slate-700">{statusOptions.find(o => o.value === entry.status)?.label || entry.status}</p>
+                            <StatusBadge status={entry.status} options={statusOptions} />
                             {entry.notes && <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">{entry.notes}</p>}
                           </div>
                         );
@@ -1555,16 +1917,13 @@ export default function App() {
                     </div>
                     <div>
                       <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">الحالة القانونية الحالية</label>
-                      <select 
-                        name="legalStatus" 
-                        required 
-                        defaultValue={activeCustomer?.legalStatus || 'none'}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/10 focus:border-emerald-500"
-                      >
-                        {statusOptions.map(opt => (
-                          <option key={opt.value} value={opt.value}>{opt.label}</option>
-                        ))}
-                      </select>
+                      <div key={activeCustomer?.id ?? 'new-customer'}>
+                        <StatusOptionPicker
+                          name="legalStatus"
+                          defaultValue={activeCustomer?.legalStatus || 'none'}
+                          options={statusOptions}
+                        />
+                      </div>
                     </div>
                     <div>
                       <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">المحامي المختص</label>
@@ -1908,49 +2267,98 @@ export default function App() {
                 <section>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">إدارة حالات المتابعة</label>
                   <div className="space-y-4">
-                     <div className="flex gap-2">
-                      <input 
-                        id="new-status"
-                        type="text" 
-                        placeholder="اسم الحالة الجديدة..."
-                        className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/10"
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            handleAddStatus(e.currentTarget.value);
-                            e.currentTarget.value = '';
-                          }
-                        }}
-                      />
-                      <button 
-                         onClick={() => {
-                          const el = document.getElementById('new-status') as HTMLInputElement;
-                          handleAddStatus(el.value);
-                          el.value = '';
-                        }}
-                        className="bg-slate-900 text-white px-4 rounded-xl text-xs font-bold hover:bg-slate-800"
-                      >
-                        إضافة
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {statusOptions.map(opt => (
-                        <div key={opt.value} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
-                          <div className="flex items-center gap-3">
-                            {(() => {
-                              const StatusIcon = ICON_MAP[opt.icon] || Info;
-                              return <StatusIcon className="w-4 h-4 text-slate-400" />;
-                            })()}
-                            <span className="text-sm font-bold text-slate-700">{opt.label}</span>
-                          </div>
-                          <button 
-                            onClick={() => handleRemoveStatus(opt.value)}
-                            className="p-1 text-slate-300 hover:text-rose-500 transition-colors"
-                            title="حذف"
+                    <div className="bg-slate-50/80 rounded-2xl border border-slate-100 p-4">
+                      <p className="text-xs font-bold text-slate-600 mb-3">إضافة حالة جديدة</p>
+                      <div className="flex gap-2">
+                        <input
+                          id="new-status"
+                          type="text"
+                          placeholder="اسم الحالة الجديدة..."
+                          className="flex-1 min-w-0 bg-white border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-300"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              handleAddStatus(e.currentTarget.value);
+                              e.currentTarget.value = '';
+                            }
+                          }}
+                        />
+                        <ColorPickerPopover
+                          selected={newStatusColor}
+                          onSelect={setNewStatusColor}
+                          isOpen={colorPickerTarget === 'new'}
+                          onClose={() => setColorPickerTarget(null)}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => setColorPickerTarget(colorPickerTarget === 'new' ? null : 'new')}
+                            className="w-11 h-11 shrink-0 rounded-xl border border-slate-200 bg-white flex items-center justify-center hover:border-slate-300 transition-colors"
+                            title="لون الحالة"
+                            aria-label="لون الحالة"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <span
+                              className={cn(
+                                'w-5 h-5 rounded-full ring-2 ring-white shadow-sm',
+                                getStatusColorClasses(newStatusColor, 'swatch')
+                              )}
+                            />
                           </button>
-                        </div>
-                      ))}
+                        </ColorPickerPopover>
+                        <button
+                          onClick={() => {
+                            const el = document.getElementById('new-status') as HTMLInputElement;
+                            handleAddStatus(el.value);
+                            el.value = '';
+                          }}
+                          className="shrink-0 bg-slate-900 text-white px-5 rounded-xl text-xs font-bold hover:bg-slate-800 transition-colors"
+                        >
+                          إضافة
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      {statusOptions.map((opt) => {
+                        const colorKey = getStatusColorKey(opt.value, statusOptions);
+                        return (
+                          <div
+                            key={opt.value}
+                            className="group flex items-center gap-3 px-3 py-2.5 bg-white rounded-xl border border-slate-100 hover:border-slate-200 hover:shadow-sm transition-all"
+                          >
+                            <ColorPickerPopover
+                              selected={colorKey}
+                              onSelect={(key) => handleUpdateStatusColor(opt.value, key)}
+                              isOpen={colorPickerTarget === opt.value}
+                              onClose={() => setColorPickerTarget(null)}
+                            >
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setColorPickerTarget(colorPickerTarget === opt.value ? null : opt.value)
+                                }
+                                className="w-8 h-8 shrink-0 rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-center hover:bg-slate-100 transition-colors"
+                                title="تغيير اللون"
+                                aria-label={`تغيير لون ${opt.label}`}
+                              >
+                                <span
+                                  className={cn(
+                                    'w-3.5 h-3.5 rounded-full',
+                                    getStatusColorClasses(colorKey, 'swatch')
+                                  )}
+                                />
+                              </button>
+                            </ColorPickerPopover>
+                            <StatusBadge status={opt.value} options={statusOptions} />
+                            <div className="flex-1" />
+                            <button
+                              onClick={() => handleRemoveStatus(opt.value)}
+                              className="p-2 rounded-lg text-slate-300 sm:opacity-0 sm:group-hover:opacity-100 hover:text-rose-500 hover:bg-rose-50 transition-all"
+                              title="حذف"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 </section>
@@ -2019,6 +2427,15 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
+
+      {selectedCustomer && (
+        <CustomerPrintView
+          customer={selectedCustomer}
+          payments={visiblePayments}
+          statusOptions={statusOptions}
+          printedBy={displayNameForUser(user, profile)}
+        />
+      )}
     </div>
   );
 }
